@@ -18,6 +18,7 @@ from records import scan
 from geometry import GeoRaster, Ground, intrinsics, camera_rotation, project_footprint
 from preprocess import query_image
 from scc_inference import telemetry, reference_config, open_reference, camera_for, frame_retrieval, block_bounds, block_map_corners
+from scc_prior import PriorTracker
 
 def label(query, valid_candidate, cfg):
     if query.is_empty or query.area <= 0: raise ValueError('Empty query footprint')
@@ -105,11 +106,45 @@ def split_audit(groups, buffer_m, sequence_exclusive=True):
             errors.append({'reason': 'candidate_geographic_leakage', 'splits': [a, b]})
     return errors
 
-def frame_candidates(full_ref, item, t, c, footprint):
+def tracked_priors(pairs, ref, tracking):
+    """Run the deployed PriorTracker (smooth/acquisition mode; no fixes are available offline) causally
+    over every (group, sequence) in frame-number order. Uses priors only, never ground truth."""
+    states, sequences = {}, {}
+    for item in pairs: sequences.setdefault((item['group'], item['sequence']), []).append(item)
+    for items in sequences.values():
+        tracker = PriorTracker(tracking)
+        for item in sorted(items, key=lambda i: i['number']):
+            r = item['record']; x, y = ref.forward.transform(r['droneLongitude'], r['droneLatitude'], errcheck=True)
+            states[item['id']] = tracker.predict(int(item['number']), x, y, float(r['droneAltitude']))
+    return states
+
+def search_prior(item, split, c, ref, states):
+    """Search-centre telemetry and window for one frame.
+
+    val/test: exactly what inference uses during acquisition (tracked prior, tracker window) or, with
+    tracking disabled, the raw prior and reference.window_m. train: GT position plus a random offset and
+    altitude error (training only), so every training frame sees deployed-style blocks around the truth.
+    """
+    t = telemetry(item['record']); cc = c['candidates']
+    if split == 'train':
+        r = item['record']; rng = np.random.default_rng(int(digest([c['seed'], item['id'], 'train_prior'])[:16], 16))
+        gx, gy = ref.forward.transform(r['droneLongitude_gt'], r['droneLatitude_gt'], errcheck=True)
+        d = float(cc.get('train_center_offset_m') or 0.)*math.sqrt(rng.random()); a = rng.uniform(0, 2*math.pi)
+        t['lon'], t['lat'] = ref.inverse.transform(gx+d*math.cos(a), gy+d*math.sin(a), errcheck=True)
+        e = float(cc.get('train_altitude_error_m') or 0.)
+        t['altitude'] = float(r['droneAltitude_gt']) + rng.uniform(-e, e)
+        return t, float(cc.get('train_window_m') or c['inference']['reference']['window_m']), 'train_gt_offset'
+    state = states.get(item['id'])
+    if state is None: return t, float(c['inference']['reference']['window_m']), 'raw_prior'
+    t['lon'], t['lat'] = ref.inverse.transform(state['x'], state['y'], errcheck=True); t['altitude'] = state['altitude']
+    return t, state['window_m'], 'tracked_prior'
+
+def frame_candidates(full_ref, item, t, c, footprint, window_m):
     """Deployed search blocks for one frame, labelled against the working-CRS footprint."""
     inf = c['inference']; spec = c['data']['groups'][item['group']]
     frame = frame_retrieval(full_ref, t, item['width'], item['height'], item['record']['isEO'], spec['isSlant'],
-                            camera_for(c, item['group']), inf.get('pose_priori', 'yp'), inf.get('retrieval_overlap_percent', 50))
+                            camera_for(c, item['group']), inf.get('pose_priori', 'yp'), inf.get('retrieval_overlap_percent', 50),
+                            window_m=window_m)
     polys, cands = [], []
     for k, mid in enumerate(frame['mids']):
         r0, r1, c0, c1 = block_bounds(mid, frame['side_px'])
@@ -142,13 +177,12 @@ def prepare(c, limit=None):
     else:
         raise ValueError('split.mode must be geographic or sequence')
     cc = c['candidates']; eval_window = float(c['inference']['reference']['window_m'])
-    train_window = float(cc.get('train_window_m') or eval_window)
     train_negatives = cc.get('train_negatives'); stride = int(cc.get('eval_query_stride') or 1)
     intensity = satellite_intensity_check(reference_config(c, eval_window))
     geo = copy.deepcopy(c['geo']); geo['dsm'] = str(path(geo['dsm'])) if geo['dsm'] else None
     satellite = GeoRaster(path(geo['satellite']), geo['authority']); ground = Ground(geo)
-    refs = {w: open_reference(c, w) for w in {eval_window, train_window}}
-    working = CRS.from_user_input(refs[eval_window].forward.target_crs)
+    ref = open_reference(c, eval_window)
+    working = CRS.from_user_input(ref.forward.target_crs)
     if working.equals(satellite.crs, ignore_axis_order=True): to_working = None
     else:
         tr = Transformer.from_crs(satellite.crs, working, always_xy=True)
@@ -156,6 +190,8 @@ def prepare(c, limit=None):
     if to_working: regions = [(s, to_working(p)) for s, p in regions]
     groups, failures, stride_position = [], [], {}
     pairs = inspection['pairs'][:limit] if limit else inspection['pairs']
+    tracking = c['inference'].get('prior_tracking', {})
+    states = tracked_priors(pairs, ref, tracking) if tracking.get('enabled', False) else {}
     try:
         for item in pairs:
             known = assignments.get(item['sequence']) if split_mode == 'sequence' else None
@@ -169,20 +205,20 @@ def prepare(c, limit=None):
                 footprint, center = project_footprint(record, R, K, box, geo, ground, satellite)
                 if to_working:
                     footprint = to_working(footprint); center = tr.transform(*center)
-                t = telemetry(record)
-                window = train_window if known == 'train' else eval_window
-                frame, cs, polys = frame_candidates(refs[window], item, t, c, footprint)
+                t, window, prior_source = search_prior(item, known or 'val', c, ref, states)
+                frame, cs, polys = frame_candidates(ref, item, t, c, footprint, window)
                 search = shapely.union_all(polys+[footprint])
                 split = (assign_split(search, regions, c['split']['buffer_m']) if split_mode == 'geographic'
                          else assignments[item['sequence']])
-                if split == 'train' and window != train_window:   # geographic mode: split known only now
-                    window = train_window; frame, cs, polys = frame_candidates(refs[window], item, t, c, footprint)
+                if split == 'train' and known is None:   # geographic mode: split known only now
+                    t, window, prior_source = search_prior(item, 'train', c, ref, states)
+                    frame, cs, polys = frame_candidates(ref, item, t, c, footprint, window)
                     search = shapely.union_all(polys+[footprint])
                 grid_size = len(cs)
                 if split == 'train' and train_negatives:
                     cs = subsample_train(cs, list(center), int(train_negatives), c['seed'], item['id'])
                 groups.append({**item, 'split': split, 'protocol': 'scc_inference', 'is_slant': c['data']['groups'][item['group']]['isSlant'],
-                               'telemetry': t, 'window_m': window, 'side_px': frame['side_px'], 'side_m': frame['side_m'],
+                               'telemetry': t, 'window_m': window, 'prior_source': prior_source, 'side_px': frame['side_px'], 'side_m': frame['side_m'],
                                'grid_size': grid_size, 'yaw_deg': frame['yaw'], 'elevation_deg': frame['elevation'], 'agl_m': frame['agl'],
                                'rotation': R.tolist(), 'optical_ned': R[:, 2].tolist(), 'K': K.tolist(), 'crop_box': list(box),
                                'query_footprint': mapping(footprint), 'ground_center_map': list(center),
@@ -190,8 +226,7 @@ def prepare(c, limit=None):
             except Exception as e:
                 failures.append({'id': item['id'], 'reason': str(e), 'image': item['image']})
     finally:
-        satellite.close(); ground.close()
-        for r in refs.values(): r.close()
+        satellite.close(); ground.close(); ref.close()
     if split_mode == 'geographic' and stride > 1:
         thinned, position = [], {}
         for g in groups:
@@ -230,6 +265,7 @@ def prepare(c, limit=None):
         'split_counts': {s: len(v) for s, v in per_split.items()},
         'covered_queries': {s: sum(any(x['label'] == 1 for x in g['candidates']) for g in v) for s, v in per_split.items()},
         'candidates_per_split': {s: sum(len(g['candidates']) for g in v) for s, v in per_split.items()},
+        'window_m': {s: [round(min(g['window_m'] for g in v)), round(max(g['window_m'] for g in v))] if v else None for s, v in per_split.items()},
         'block_side_m': {s: [round(min(g['side_m'] for g in v), 1), round(max(g['side_m'] for g in v), 1)] if v else None for s, v in per_split.items()},
         'estimated_feature_bytes': sum(len(g['candidates'])+1 for g in groups)*1024*4, 'satellite_intensity': intensity})
     if leakage: raise ValueError('Geographic split leakage; see preparation_report.json')

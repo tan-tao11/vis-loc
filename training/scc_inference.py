@@ -261,9 +261,14 @@ def camera_for(c, group):
     return camera
 
 
-def frame_retrieval(full_ref, t, width, height, is_eo, is_slant, camera, pose_priori='yp', cover=50):
-    """Search map, rotation and candidate block centres exactly as the deployed SCC backend."""
+def frame_retrieval(full_ref, t, width, height, is_eo, is_slant, camera, pose_priori='yp', cover=50, window_m=None):
+    """Search map, rotation and candidate block centres exactly as the deployed SCC backend.
+
+    t holds the search-centre prior (already passed through prior tracking, as in BaseBackend.prepare);
+    window_m is the per-frame search window the tracker chose (inference sets full_ref.window_m likewise).
+    """
     if pose_priori not in ('yp', 'unknown'): raise ValueError('pose_priori must be yp or unknown')
+    if window_m is not None: full_ref.window_m = float(window_m)
     view = full_ref.for_frame(t)
     K = camera_matrix(camera, t, width, height)
     agl = view.agl(t, camera)
@@ -329,16 +334,15 @@ def map_to_rotated(frame, xy):
 class TileSource:
     """Rebuilds candidate tiles from a manifest group; caches the last group's rotated map."""
     def __init__(self, c):
-        self.c = c; self.refs = {}; self._key = None; self._frame = None
+        self.c = c; self.ref = None; self._key = None; self._frame = None
 
     def frame(self, g):
         if self._key != g['id']:
-            w = g['window_m']
-            if w not in self.refs: self.refs[w] = open_reference(self.c, w)
+            if self.ref is None: self.ref = open_reference(self.c, g['window_m'])
             inf = self.c['inference']
-            self._frame = frame_retrieval(self.refs[w], g['telemetry'], g['width'], g['height'], g['record']['isEO'],
+            self._frame = frame_retrieval(self.ref, g['telemetry'], g['width'], g['height'], g['record']['isEO'],
                                           g['is_slant'], camera_for(self.c, g['group']), inf.get('pose_priori', 'yp'),
-                                          inf.get('retrieval_overlap_percent', 50))
+                                          inf.get('retrieval_overlap_percent', 50), window_m=g['window_m'])
             if self._frame['side_px'] != g['side_px'] or len(self._frame['mids']) != g['grid_size']:
                 raise ValueError('Rebuilt search grid differs from manifest; regenerate manifest: ' + g['id'])
             self._key = g['id']
@@ -349,5 +353,5 @@ class TileSource:
         return crop_tile(f['ref_image'], g['candidates'][index]['mid'], f['side_px'], size)
 
     def close(self):
-        for r in self.refs.values(): r.close()
-        self.refs = {}
+        if self.ref is not None: self.ref.close()
+        self.ref = None

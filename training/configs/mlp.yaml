@@ -33,9 +33,14 @@ inference:
     reference_window_scale: 1.2
     nadir_reference_alignment: false
   camera_by_group: {}           # 部署对垂直组(DV/NV)另有设置时在此按组覆盖
+  prior_tracking:               # = naviParams infrared.prior_tracking（max_window_m 按 10 秒/帧实测标定）
+    enabled: true
+    max_window_m: 2000
 
 candidates:
-  train_window_m: 1200          # 仅训练集用更大搜索窗（更多负例、斜视帧也有正例）；验证/测试=推理窗口。越大越慢
+  train_window_m: 1200          # 仅训练集：搜索窗边长（越大负例越多，也越慢）；验证/测试用推理跟踪器的窗口
+  train_center_offset_m: 300    # 仅训练集：中心=真值+≤300 m 随机偏移
+  train_altitude_error_m: 100   # 仅训练集：高度±100 m（平滑后残差），块尺寸随之偏差
   train_negatives: 128          # 训练集每查询：全部正例 + 128 个负例（一半最近、一半随机）
   eval_query_stride: 5          # 验证/测试每条序列每 5 帧取 1 帧
 

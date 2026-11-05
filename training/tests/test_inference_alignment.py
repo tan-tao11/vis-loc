@@ -64,3 +64,31 @@ def test_query_preprocessing_matches_crop_center(tmp_path, w, h):
     actual, _ = query_image(str(f), {'size': 336, 'intensity': {'ir': {'uint8': [0, 255], 'nodata': None}}})
     assert expected.shape == (336, 336, 3) and (expected == expected[..., :1]).all()
     assert np.array_equal(actual, expected[..., 0])
+
+
+@needs_inference
+def test_prior_tracker_is_byte_copy():
+    assert (ROOT/'scc_prior.py').read_bytes() == (INFERENCE/'single-so/python/prior_tracker.py').read_bytes()
+
+
+def test_val_search_prior_never_uses_ground_truth():
+    from prepare_dataset import search_prior
+    from pyproj import Transformer
+    ref = type('R', (), {'forward': Transformer.from_crs('EPSG:4326', 'EPSG:32645', always_xy=True),
+                         'inverse': Transformer.from_crs('EPSG:32645', 'EPSG:4326', always_xy=True)})()
+    rec = dict(droneLongitude=87., droneLatitude=42., droneAltitude=1000., droneLongitude_gt=87.05, droneLatitude_gt=42.02,
+               droneAltitude_gt=900., sensorYaw=0, sensorPitch=0, sensorRoll=0, innsYaw=0, innsPitch=-80, innsRoll=0, hfov=50, vfov=40)
+    c = {'seed': 1, 'candidates': {'train_center_offset_m': 300, 'train_altitude_error_m': 200, 'train_window_m': 1200},
+         'inference': {'reference': {'window_m': 600}}}
+    item = {'id': 'DS/s/1', 'record': rec, 'number': 1}
+    from scc_prior import PriorTracker
+    x, y = ref.forward.transform(87., 42.)
+    states = {'DS/s/1': PriorTracker().predict(1, x, y, 1000.)}
+    t1, w1, src = search_prior(item, 'val', c, ref, states)
+    rec.update(droneLongitude_gt=0., droneLatitude_gt=0., droneAltitude_gt=0.)
+    t2, w2, _ = search_prior(item, 'val', c, ref, states)
+    assert src == 'tracked_prior' and t1 == t2 and w1 == w2 and abs(t1['lon']-87.) < 1e-9
+    rec.update(droneLongitude_gt=87.05, droneLatitude_gt=42.02, droneAltitude_gt=900.)
+    t3, w3, src3 = search_prior(item, 'train', c, ref, states)
+    gx, gy = ref.forward.transform(87.05, 42.02); tx, ty = ref.forward.transform(t3['lon'], t3['lat'])
+    assert src3 == 'train_gt_offset' and w3 == 1200 and np.hypot(tx-gx, ty-gy) <= 300 + 1e-6 and abs(t3['altitude']-900.) <= 200

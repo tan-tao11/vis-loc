@@ -17,6 +17,7 @@ import cv2
 import numpy as np
 from pyproj import CRS, Transformer
 from tuning import read_config, merge, validate_tuning, CVProxy, configure_matcher, match_pair, good_enough
+from prior_tracker import PriorTracker
 
 TELEMETRY_KEYS = ("lon", "lat", "altitude", "drone_yaw", "drone_pitch", "drone_roll",
                   "sensor_yaw", "sensor_pitch", "sensor_roll", "inns_yaw", "inns_pitch",
@@ -301,6 +302,10 @@ class BaseBackend:
         if config.get('active_profile'):reference['window_m']=self.tuning['search_window_m']
         self.ref = Reference(reference)
         self.full_ref = self.ref
+        # Large independent per-frame prior errors: smooth over the sequence, then track accepted fixes.
+        tracking = self.section.get('prior_tracking', {})
+        self.tracker = PriorTracker(tracking) if tracking.get('enabled', False) and self.full_ref.window_m > 0 else None
+        self.last_fix = None
         self.camera = self.section.get("camera", {})
         self.device = config.get("device", "cuda")
         if self.device not in ("cuda", "cuda:0"):
@@ -326,8 +331,14 @@ class BaseBackend:
         self.trace=dict(number=request['number'],imgType=self.mode,profile=self.config.get('active_profile','legacy'),
                         dense_match_s=0.,pose_s=0.,retrieval_s=0.,prepare_s=0.,candidate_pipeline_s=0.,
                         candidates_attempted=0,candidates=[],fallback_used=False)
+        self.last_fix=None
 
     def end_frame(self, success, error=None):
+        tracker=getattr(self,'tracker',None)
+        if tracker is not None and success and getattr(self,'last_fix',None) is not None:
+            lon,lat,inliers=self.last_fix
+            x,y=self.full_ref.forward.transform(lon,lat,errcheck=True)
+            self.trace['prior_fix_accepted']=tracker.update(self.trace['number'],x,y,inliers)
         self.trace.update(success=success,error=error,total_s=time.perf_counter()-self.frame_start)
         self.trace['filter_and_glue_s']=max(0.,self.trace['candidate_pipeline_s']-self.trace['dense_match_s']-self.trace['pose_s'])
         if not self.tuning['profile_timing']:return
@@ -369,6 +380,17 @@ class BaseBackend:
             raise ValueError("invalid position prior")
         h, w = image.shape[:2]
         self.query_shape=(h,w)
+        tracker=getattr(self,'tracker',None)
+        if tracker is not None:
+            x,y=self.full_ref.forward.transform(t["lon"],t["lat"],errcheck=True)
+            state=tracker.predict(int(request["number"]),x,y,t["altitude"])
+            t["lon"],t["lat"]=self.full_ref.inverse.transform(state["x"],state["y"],errcheck=True)
+            t["altitude"]=state["altitude"]
+            self.full_ref.window_m=state["window_m"]
+            self.trace['prior']={k:state[k] for k in ('mode','radius_m','window_m','frames')}
+            print('[PRIOR_TRACK] frame=%s mode=%s frames=%d radius=%.0fm window=%.0fm shift=%.0fm alt=%.1f'%(
+                request["number"],state["mode"],state["frames"],state["radius_m"],state["window_m"],
+                math.hypot(state["x"]-x,state["y"]-y),state["altitude"]),flush=True)
         self.ref = self.full_ref.for_frame(t)
         K = camera_matrix(self.camera, t, w, h)
         # C++ interface is RGB. Both deployed pipelines take BGR arrays.
@@ -480,6 +502,7 @@ class AnyVisBackend(BaseBackend):
         if self.tuning['reject_weak_results'] and not good_enough(self.trace['candidates'],self.tuning):
             raise RuntimeError('AnyVisLoc: geometry quality gate not met')
         lon, lat, alt = self.ref.local_to_geographic(xyz[best])
+        self.last_fix = (lon, lat, counts[best])
         return lon, lat, alt, self.confidence(counts[best])
 
 
@@ -605,4 +628,5 @@ class SCCBackend(BaseBackend):
         best = valid[index]
         if self.tuning['reject_weak_results'] and not good_enough(self.trace['candidates'],self.tuning):
             raise RuntimeError('SCC-Loc: geometry quality gate not met')
+        self.last_fix = (blh[best]["L"], blh[best]["B"], counts[best])
         return blh[best]["L"], blh[best]["B"], blh[best]["H"], self.confidence(counts[best], errors[best])

@@ -14,7 +14,7 @@ def center_crop_box(width, height):
     # Mirrors snapshot integer centre / half-size, including odd dimensions.
     return (width//2-side//2, height//2-side//2, width//2+side//2, height//2+side//2)
 
-def intensity_u8(a, spec, valid=None):
+def intensity_u8(a, spec, valid=None, *, mask_only=False):
     if a.ndim != 2: raise ValueError('Expected one-channel IR/satellite')
     kind = 'uint8' if a.dtype == np.uint8 else 'uint16' if a.dtype == np.uint16 else 'float' if np.issubdtype(a.dtype, np.floating) else None
     if kind is None: raise ValueError(f'Unsupported intensity dtype {a.dtype}')
@@ -24,6 +24,7 @@ def intensity_u8(a, spec, valid=None):
     if not np.isfinite([lo, hi]).all() or hi <= lo: raise ValueError('Invalid intensity range')
     mask = np.isfinite(a) if valid is None else valid & np.isfinite(a)
     if spec.get('nodata') is not None: mask &= a != spec['nodata']
+    if mask_only: return None, mask
     out = np.rint(np.clip((a.astype(np.float32)-lo)/(hi-lo), 0, 1)*255)
     out[~mask] = 0
     return out.astype(np.uint8), mask
@@ -59,11 +60,13 @@ def rotation_affine(width, height, angle):
     M[:2, 2] += M[:2, :2] @ np.array([-(nw-width)/2, -(nh-height)/2])
     return M, (int(nw), int(nh))
 
-def local_rotated_crop(raster, inverse, box, spec, max_pixels=16000000):
+def local_rotated_crop(raster, inverse, box, spec, max_pixels=16000000, *, mask_only=False):
     """Equivalent to crop(PIL.rotate(full native-resolution uint8 map)).
 
     A bounded source window includes the bicubic support. Geometry uses pixel
     corners; PIL performs half-pixel sampling internally. No DSM resampling.
+    mask_only skips intensity conversion and image interpolation for label preparation;
+    it returns None for the image, with identical validity checks, mask and corners.
     """
     l, t, r, b = map(int, box); w, h = r-l, b-t
     if min(w, h) <= 0 or w*h > max_pixels: raise ValueError('Candidate pixel budget exceeded')
@@ -73,13 +76,13 @@ def local_rotated_crop(raster, inverse, box, spec, max_pixels=16000000):
     # Clip, rather than pad: PIL's exact edge extension must match full-map rotate.
     x0, y0 = max(0, x0), max(0, y0); x1, y1 = min(raster.width, x1), min(raster.height, y1)
     if x1 <= x0 or y1 <= y0:
-        return np.zeros((h, w), np.uint8), np.zeros((h, w), bool), corners[:, :2]
+        return (None if mask_only else np.zeros((h, w), np.uint8)), np.zeros((h, w), bool), corners[:, :2]
     if (x1-x0)*(y1-y0) > max_pixels: raise ValueError('Source window pixel budget exceeded')
     a = raster.ds.read(1, window=Window(x0, y0, x1-x0, y1-y0), masked=True)
-    u, valid = intensity_u8(np.asarray(a), spec, ~np.ma.getmaskarray(a))
+    u, valid = intensity_u8(np.asarray(a), spec, ~np.ma.getmaskarray(a), mask_only=mask_only)
     M = inverse.copy(); M[:2, 2] += M[:2, :2] @ [l, t] - [x0, y0]
     coeff = tuple(M[:2].ravel())
-    out = np.array(Image.fromarray(u).transform((w, h), Image.Transform.AFFINE, coeff, Image.Resampling.BICUBIC))
+    out = None if mask_only else np.array(Image.fromarray(u).transform((w, h), Image.Transform.AFFINE, coeff, Image.Resampling.BICUBIC))
     # Require whole interpolation support valid; prevents NoData counting as coverage.
     eroded = cv2.erode(valid.astype(np.uint8), np.ones((5, 5), np.uint8), borderType=cv2.BORDER_CONSTANT, borderValue=0)
     mask = np.array(Image.fromarray(eroded).transform((w, h), Image.Transform.AFFINE, coeff, Image.Resampling.NEAREST)) > 0
@@ -93,5 +96,10 @@ def valid_polygon(mask, inverse, box, raster_transform):
     shift = Affine.translation(box[0], box[1])
     rot = Affine(*np.asarray(inverse)[:2].ravel())
     tf = raster_transform * rot * shift
+    if mask.all():
+        h, w = mask.shape
+        # Match GDAL polygonization arithmetic order, including rounding.
+        return Polygon([(tf.c + x*tf.a + y*tf.b, tf.f + x*tf.d + y*tf.e)
+                        for x, y in ((0, 0), (0, h), (w, h), (w, 0))])
     polygons = [shape(g) for g, v in shapes(mask.astype('uint8'), mask=mask, transform=tf) if v == 1]
     return unary_union(polygons) if polygons else Polygon()

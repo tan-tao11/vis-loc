@@ -142,7 +142,7 @@ def prepare(c, limit=None):
                 angle = reference_angle(prior, R, satellite, geo['normal_to_ellipsoid_m'])
                 cs = []
                 for cand in candidates(prior, angle, satellite, c, ground):
-                    _, mask, corners = local_rotated_crop(satellite, np.array(cand['inverse']), cand['box'], c['preprocess']['intensity']['satellite'], c['candidates']['max_window_pixels'])
+                    _, mask, corners = local_rotated_crop(satellite, np.array(cand['inverse']), cand['box'], c['preprocess']['intensity']['satellite'], c['candidates']['max_window_pixels'], mask_only=True)
                     fraction = float(mask.mean())
                     if fraction < c['candidates']['min_valid_fraction']: continue
                     valid = valid_polygon(mask, cand['inverse'], cand['box'], satellite.transform)

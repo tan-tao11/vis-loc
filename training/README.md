@@ -39,6 +39,8 @@ GitHub 克隆不包含离线安装材料，不能直接把本仓库当作 `offli
 
 先完成 TXT 字段核验、几何检查和数据准备，再启动训练。MLP 还需要提前提取特征缓存；LoRA 从准备好的 manifest 读取原图。详细顺序见 [原部署说明](README_中文.md)。
 
+缺少 `regions.geojson` 时，可选择 [按 sequence 划分](docs/序列划分.md)：用配置把完整序列指定到 train / val / test，同名序列在四类数据中保持一致。默认地理划分仍保留。
+
 | 训练方式 | PowerShell 入口 |
 |---|---|
 | MLP 单卡 | `scripts/train.ps1` |

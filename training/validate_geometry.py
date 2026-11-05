@@ -74,7 +74,7 @@ def static_checks(c):
         except (ValueError, TypeError) as e: add('error', 'preprocess.intrinsics_override', str(e))
     if any(c['candidates']['height_offsets_m']) and not c['candidates'].get('reference_agl_m'):
         add('warning', 'candidates.reference_agl_m', 'Height-dependent candidate scaling needs nominal AGL before formal preparation')
-    if not c['split'].get('regions_geojson'):
+    if c['split'].get('mode', 'geographic') == 'geographic' and not c['split'].get('regions_geojson'):
         add('warning', 'split.regions_geojson', 'Geography split is needed for training, but not for this diagnostic')
     return issues
 

@@ -4,7 +4,7 @@ from PIL import Image
 from rasterio.transform import from_origin
 from common import config, ROOT
 from geometry import camera_rotation, checked_rotation, tfw_transform, GeoRaster, CameraFrame, Ground, intersect, reference_angle
-from preprocess import rotation_affine, local_rotated_crop, intensity_u8
+from preprocess import intensity_u8
 from synthetic import write_tiff
 
 @pytest.fixture
@@ -27,20 +27,6 @@ def test_ray_ground_horizon(cfg):
         with pytest.raises(ValueError, match='horizon'): intersect(frame, ray, g)
     with pytest.raises(ValueError): Ground(dict(cfg['geo'], dsm=None))
 
-@pytest.mark.parametrize('angle', [0, 90, 180, 270, 27.6, -36.4])
-def test_pil_local_rotation_exact(tmp_path, angle):
-    # Asymmetric directional image, not a rotationally symmetric 180-only fixture.
-    a = np.zeros((63, 91), np.uint8); a[8:18, 9:50] = 220; a[18:40, 9:17] = 100; a[41:48, 70:79] = 170
-    f = tmp_path/'a.tif'; write_tiff(f, a, from_origin(500000, 4700000, 2, 2), 'EPSG:32645')
-    expected = np.asarray(Image.fromarray(a).rotate(angle, expand=True, resample=Image.Resampling.BICUBIC))
-    M, size = rotation_affine(91, 63, angle); assert size == expected.shape[::-1]
-    with GeoRaster(f) as r:
-        box = [3, 2, size[0]-4, size[1]-3]
-        actual, _, _ = local_rotated_crop(r, M, box, {'uint8': [0, 255]})
-    assert np.max(np.abs(actual.astype(int)-expected[2:size[1]-3, 3:size[0]-4].astype(int))) <= 1
-    p = np.array([13.5, 25.5, 1]); assert np.allclose(np.linalg.inv(M)@M@p, p)
-    if angle == 90: assert np.array_equal(expected, np.rot90(a))
-    if angle == 270: assert np.array_equal(expected, np.rot90(a, 3))
 
 def test_tfw_half_pixel_rotation_conflict(tmp_path):
     p = tmp_path/'x.tfw'; p.write_text('2\n.3\n.2\n-2\n101\n199\n')

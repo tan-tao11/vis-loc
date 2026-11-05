@@ -3,8 +3,9 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 from common import config, path, read_json, write_json
-from geometry import camera_rotation, intrinsics, CameraFrame, Ground, intersect, GeoRaster
-from preprocess import query_image, candidate_image, local_rotated_crop
+from geometry import camera_rotation, intrinsics, CameraFrame, Ground, intersect
+from preprocess import query_image
+from scc_inference import TileSource, reference_config, block_bounds, map_to_rotated
 from shapely.geometry import shape
 from outputs import fresh_directory
 
@@ -68,19 +69,19 @@ def contact_sheet(manifest, output, evaluation=None, mode=None):
     canvas = Image.new('RGB', (1450, 290*max(1, len(selected))+50), '#101924'); draw = ImageDraw.Draw(canvas)
     draw.text((15, 12), 'SYNTHETIC DIAGNOSTICS - NOT REAL ACCURACY' if m['synthetic'] else 'CALIBRATION / RETRIEVAL DIAGNOSTICS', fill='white')
     draw.text((650, 12), ('mode: '+mode+' | worst query per group in '+report['split']) if evaluation else 'Candidate preview (NOT ranking; manifest order)', fill='#ffcb55')
-    satellite = GeoRaster(path(c['geo']['satellite']), c['geo']['authority'])
+    tiles = TileSource(c)
     try:
         from prepare_dataset import satellite_intensity_check
         try:
-            stats = satellite_intensity_check(satellite, c['preprocess']['intensity']['satellite'])
-            draw.text((15, 30), f"satellite {stats['dtype']} band 1/{stats['band_count']} range {stats['configured_range']} "
+            stats = satellite_intensity_check(reference_config(c, c['inference']['reference']['window_m']))
+            draw.text((15, 30), f"satellite {stats['dtypes']} bands {stats['image_bands']} range {stats['image_value_range']} "
                       f"raw p0.5/p50/p99.5 {[round(v, 2) for v in stats['raw_percentiles'].values()]} "
                       f"white {stats['mapped_white_fraction']:.2f} black {stats['mapped_black_fraction']:.2f}", fill='#a0b0c4')
         except ValueError as e:
             errors.append({'panel': 'satellite_intensity', 'error': str(e)})
-            draw.text((15, 30), 'SATELLITE INTENSITY RANGE WRONG (tiles saturate); see contact_sheet.png.json', fill='#ff7777')
-        _draw_rows(m, c, selected, rows_by_id, evaluation, satellite, canvas, draw, errors)
-    finally: satellite.close()
+            draw.text((15, 30), 'SATELLITE VALUE RANGE WRONG (tiles saturate); see contact_sheet.png.json', fill='#ff7777')
+        _draw_rows(m, c, selected, rows_by_id, evaluation, tiles, canvas, draw, errors)
+    finally: tiles.close()
     Path(output).parent.mkdir(parents=True, exist_ok=True); canvas.save(output)
     status = {'status': 'partial' if errors else 'complete', 'mode': mode, 'manifest_id': m['manifest_id'],
         'synthetic': m['synthetic'], 'selected_ids': [g['id'] for g in selected], 'errors': errors,
@@ -89,7 +90,9 @@ def contact_sheet(manifest, output, evaluation=None, mode=None):
     return status
 
 
-def _draw_rows(m, c, selected, rows_by_id, evaluation, satellite, canvas, draw, errors):
+def _draw_rows(m, c, selected, rows_by_id, evaluation, tiles, canvas, draw, errors):
+    """Panels show exactly what the deployed retrieval scores (pre-SGVA), built by scc_inference."""
+    import cv2
     for i, g in enumerate(selected):
         top = 55+i*290
         try:
@@ -100,55 +103,43 @@ def _draw_rows(m, c, selected, rows_by_id, evaluation, satellite, canvas, draw, 
             draw.text((15, top+60), 'Query render failed; see JSON', fill='#ff7777')
         draw.text((15, top+214), g['id'], fill='white')
         cs = g['candidates']; order = rows_by_id[g['id']]['order'] if evaluation else list(range(len(cs)))
-        if cs:
-            # Overview around the shown candidates only; the whole search window can exceed the pixel budget.
-            bounds = np.array([cs[j]['box'] for j in order[:3]])
-            lo, hi = bounds[:, :2].min(0), bounds[:, 2:].max(0); pad = (hi-lo)*.5
-            overview_box = [int(lo[0]-pad[0]), int(lo[1]-pad[1]), int(hi[0]+pad[0]), int(hi[1]+pad[1])]
-            try:
-                overview, overview_mask, _ = local_rotated_crop(satellite, np.array(cs[0]['inverse']), overview_box,
-                    c['preprocess']['intensity']['satellite'], c['candidates']['max_window_pixels'])
-                canvas.paste(Image.fromarray(overview).convert('RGB').resize((210, 210)), (240, top))
-                draw.text((240, top+214), 'aligned reference overview', fill='white')
-            except (ValueError, OSError) as e:
-                errors.append({'id': g['id'], 'panel': 'overview', 'error': str(e)})
-                draw.text((240, top+70), 'Overview unavailable; see JSON', fill='#ff7777')
+        try: frame = tiles.frame(g)
+        except Exception as e:
+            errors.append({'id': g['id'], 'panel': 'search_map', 'error': str(e)})
+            draw.text((240, top+70), 'Search map failed; see JSON', fill='#ff7777'); continue
+        footprint = np.asarray(shape(g['query_footprint']).exterior.coords)
+        fp_rot = map_to_rotated(frame, footprint)
+        # Overview: rotated search map as fed to retrieval; grey = all scored blocks, yellow = shown top-3, green = footprint.
+        ref = frame['ref_image']; rgb = ref if ref.ndim == 3 else np.repeat(ref[..., None], 3, -1)
+        overview = Image.fromarray(cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)); od = ImageDraw.Draw(overview)
+        for k, cand in enumerate(cs):
+            r0, r1, c0, c1 = block_bounds(cand['mid'], frame['side_px'])
+            od.rectangle((c0, r0, c1, r1), outline=(255, 203, 85) if k in order[:3] else (120, 130, 140), width=max(1, ref.shape[0]//200))
+        od.line([tuple(p) for p in fp_rot], fill=(46, 255, 160), width=max(2, ref.shape[0]//150))
+        canvas.paste(overview.resize((210, 210)), (240, top))
+        draw.text((240, top+214), f"search map {g['window_m']:.0f} m, {len(cs)}/{g['grid_size']} blocks", fill='white')
         for k, j in enumerate(order[:3]):
-            x = 465+k*225
-            cand = cs[j]
-            try: img, mask = candidate_image(satellite, cand, c['preprocess'], c['candidates']['max_window_pixels'])
-            except (ValueError, OSError) as e:
+            x = 465+k*225; cand = cs[j]
+            try: img = tiles.tile(g, j, c['preprocess']['size'])
+            except Exception as e:
                 errors.append({'id': g['id'], 'panel': 'candidate', 'candidate_index': j, 'error': str(e)})
                 draw.text((x, top+60), f'Candidate {j} failed; see JSON', fill='#ff7777'); continue
-            tile_image = np.repeat(img[..., None], 3, axis=-1)
-            import cv2
-            display_mask = cv2.resize(mask.astype('uint8'), (img.shape[1], img.shape[0]), interpolation=cv2.INTER_NEAREST) > 0
-            tile_image[~display_mask] = [180, 30, 30]
-            canvas.paste(Image.fromarray(tile_image).resize((210, 210)), (x, top))
-            # Projected footprint uses platform GT and the configured camera geometry;
-            # it is not an independently observed ground-truth image footprint.
-            poly = shape(g['query_footprint']); forward = np.linalg.inv(np.array(cand['inverse']))
-            pts = []
-            for xy in poly.exterior.coords:
-                col, row = ~satellite.transform * xy; rot = forward @ [col, row, 1]
-                pts.append((x+(rot[0]-cand['box'][0])/(cand['box'][2]-cand['box'][0])*210,
-                            top+(rot[1]-cand['box'][1])/(cand['box'][3]-cand['box'][1])*210))
-            # Clip annotations to a tile so out-of-candidate footprint cannot overwrite other panels.
-            tile = canvas.crop((x, top, x+210, top+210)); td = ImageDraw.Draw(tile)
-            td.line([(px-x, py-top) for px, py in pts], fill='#2effa0', width=2)
-            td.line((15, 30, 70, 30), fill='#ffcb55', width=3); td.polygon([(70, 30), (62, 25), (62, 35)], fill='#ffcb55')
+            rgb = img if img.ndim == 3 else np.repeat(img[..., None], 3, -1)
+            tile = Image.fromarray(cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)).resize((210, 210)); td = ImageDraw.Draw(tile)
+            r0, r1, c0, c1 = block_bounds(cand['mid'], frame['side_px'])
+            td.line([((p[0]-c0)/(c1-c0)*210, (p[1]-r0)/(r1-r0)*210) for p in fp_rot], fill='#2effa0', width=2)
             canvas.paste(tile, (x, top))
+            white = float((img == 255).all(-1).mean()) if img.ndim == 3 else float((img == 255).mean())
             prefix = f'rank {k+1}' if evaluation else f'preview {j}'
             draw.text((x, top+214), f"{prefix} label {cand['label']} cov {cand['coverage']:.2f}", fill='white')
-            white = float((img[display_mask] == 255).mean()) if display_mask.any() else 0.
             draw.text((x, top+231), f"{cand['scale_m']:.1f} m / valid {cand['valid_fraction']:.3f} / white {white:.2f}",
                       fill='#ff7777' if white > .9 else '#a0b0c4')
             if evaluation and 'scores' in rows_by_id[g['id']]:
                 draw.text((x, top+247), f"index {j} / score {rows_by_id[g['id']]['scores'][j]:.6f}", fill='#ffcb55')
-        r = g['record']; info = [g['group'], f"rotate {g['angle_deg']:.3f} deg", f"isEO={r['isEO']}",
-             f"INS {r['innsYaw']:.2f}", f"{r['innsPitch']:.2f}, {r['innsRoll']:.2f}",
-             f"sensor {r['sensorYaw']:.2f}", f"{r['sensorPitch']:.2f}, {r['sensorRoll']:.2f}",
-             'green: projected footprint', 'yellow: image right', 'red: invalid support', 'scored crops, pre-SGVA']
+        r = g['record']; info = [g['group'], f"yaw {g['yaw_deg']:.2f} elev {g['elevation_deg']:.2f}", f"AGL {g['agl_m']:.1f} m",
+             f"isEO={r['isEO']} slant={g['is_slant']}", f"INS {r['innsYaw']:.2f}, {r['innsPitch']:.2f}, {r['innsRoll']:.2f}",
+             f"sensor {r['sensorYaw']:.2f}, {r['sensorPitch']:.2f}, {r['sensorRoll']:.2f}",
+             f"block {g['side_m']:.1f} m = {g['side_px']} px", 'green: GT footprint', 'yellow: shown blocks', 'tiles = deployed input, pre-SGVA']
         for k, line in enumerate(info): draw.text((1150, top+k*20), line, fill='white')
 
 if __name__ == '__main__':

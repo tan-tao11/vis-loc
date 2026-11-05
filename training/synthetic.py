@@ -26,7 +26,9 @@ def make_fixture(directory):
     c['preprocess']['deployment_confirmed'] = False
     c['geo'].update(satellite=str(root/'satellite.tif'), dsm=str(root/'dsm.tif'), vertical_confirmed=False,
                     normal_to_ellipsoid_m=0., dsm_to_platform_offset_m=0., platform_datum='synthetic normal', dsm_datum='synthetic normal')
-    c['candidates'].update(search_radius_m=180, sizes_m=[160, 220], height_offsets_m=[0], max_per_query=100)
+    # Inference-mirrored search: DSM is EPSG:4326 here, so the working grid is declared explicitly.
+    c['inference']['reference'].update(working_crs='EPSG:32645', resolution_m=2.0, window_m=400, nodata=-9999)
+    c['inference']['camera_by_group'] = {g: {'nadir_reference_alignment': True} for g in ('DV', 'NV')}
     c['split'].update(regions_geojson=str(root/'regions.geojson'), buffer_m=30)
     c['train'].update(epochs=8, patience=4, batch_size=4)
     c['extract'].update(batch_size=4)

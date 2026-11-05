@@ -6,13 +6,13 @@ import numpy as np
 import torch
 from common import config, path, read_json, write_json, digest, verify_manifest, sha256, ROOT
 from cache import group_cache_name
-from geometry import GeoRaster
-from preprocess import query_image, candidate_image, tensor_image
+from preprocess import query_image, tensor_image
+from scc_inference import TileSource, tile_tensor
 from models import load_backbone, forward_frozen, backbone_identity
 
 def extraction_identity(m, c, identity):
     return digest({'manifest_id': m['manifest_id'], 'config': c, 'backbone': identity,
-                   'pipeline_code': {name: sha256(ROOT/name) for name in ('geometry.py', 'preprocess.py', 'models.py', 'extract_features.py')},
+                   'pipeline_code': {name: sha256(ROOT/name) for name in ('geometry.py', 'preprocess.py', 'scc_inference.py', 'scc_geodata.py', 'models.py', 'extract_features.py')},
                    'pipeline_version': 1, 'torch': str(torch.__version__), 'amp': c['extract']['amp']})
 
 def extract(c, manifest, cache_dir, device='cuda:0', shard_index=0, num_shards=1):
@@ -22,7 +22,7 @@ def extract(c, manifest, cache_dir, device='cuda:0', shard_index=0, num_shards=1
     cache_dir = Path(cache_dir); cache_dir.mkdir(parents=True, exist_ok=True)
     backbone, identity = load_backbone(c, device)
     fp = extraction_identity(m, c, identity)
-    raster = GeoRaster(path(c['geo']['satellite']), c['geo']['authority'])
+    tiles = TileSource(c); pp = c['preprocess']
     failures = []; chosen = [g for i, g in enumerate(m['groups']) if i % num_shards == shard_index]
     batch_size = c['extract']['batch_size']; start = time.perf_counter()
     # Real input memory probe; halve on CUDA OOM, then keep measured safe batch.
@@ -50,7 +50,7 @@ def extract(c, manifest, cache_dir, device='cuda:0', shard_index=0, num_shards=1
                     q = forward_frozen(backbone, tensor_image(u, c['preprocess']).unsqueeze(0).to(device), c['extract']['amp'])[0].cpu().numpy()
                     feats = []
                     for j in range(0, len(g['candidates']), batch_size):
-                        images = [tensor_image(candidate_image(raster, cand, c['preprocess'], c['candidates']['max_window_pixels'])[0], c['preprocess']) for cand in g['candidates'][j:j+batch_size]]
+                        images = [tile_tensor(tiles.tile(g, k, pp['size']), pp['mean'], pp['std']) for k in range(j, min(j+batch_size, len(g['candidates'])))]
                         feats.append(forward_frozen(backbone, torch.stack(images).to(device), c['extract']['amp']).cpu().numpy())
                     sat = np.concatenate(feats) if feats else np.empty((0, 1024), np.float32)
                     with open(str(dest)+'.partial', 'wb') as f:
@@ -64,7 +64,7 @@ def extract(c, manifest, cache_dir, device='cuda:0', shard_index=0, num_shards=1
                 except Exception as e:
                     if attempt == c['extract']['retries']: failures.append({'id': g['id'], 'error': repr(e)})
     finally:
-        raster.close()
+        tiles.close()
     write_json(cache_dir/f'shard_{shard_index}.json', {'shard_index': shard_index, 'num_shards': num_shards,
         'assigned_ids': [g['id'] for g in chosen], 'fingerprint': fp, 'backbone': identity,
         'batch_size': batch_size, 'device': device, 'failures': failures, 'seconds': time.perf_counter()-start})

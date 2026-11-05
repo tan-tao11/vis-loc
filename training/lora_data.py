@@ -3,8 +3,8 @@ import random
 import numpy as np
 import torch
 from common import path, read_json, verify_manifest, require_real_ready, digest
-from geometry import GeoRaster
-from preprocess import query_image, candidate_image, tensor_image
+from preprocess import query_image, tensor_image
+from scc_inference import TileSource, tile_tensor
 
 
 def load_manifest(filename):
@@ -21,17 +21,17 @@ class OnlineImages:
         self.manifest = manifest
         self.config = manifest['config']
         c = self.config
-        self.satellite = GeoRaster(path(c['geo']['satellite']), c['geo']['authority'])
+        self.tiles = TileSource(c)
 
-    def close(self): self.satellite.close()
+    def close(self): self.tiles.close()
     def __enter__(self): return self
     def __exit__(self, *args): self.close()
 
     def read(self, group, index=None):
         c = self.config
-        if index is None: u, _ = query_image(group['image'], c['preprocess'])
-        else: u, _ = candidate_image(self.satellite, group['candidates'][index], c['preprocess'], c['candidates']['max_window_pixels'])
-        return tensor_image(u, c['preprocess'])
+        pp = c['preprocess']
+        if index is None: return tensor_image(query_image(group['image'], pp)[0], pp)
+        return tile_tensor(self.tiles.tile(group, index, pp['size']), pp['mean'], pp['std'])
 
 
 def encode_group(model, images, group, device, batch_size, amp, indices=None):

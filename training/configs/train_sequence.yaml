@@ -1,124 +1,19 @@
-# sequence 模式完整参考配置；默认 MLP，LoRA 也使用此配置生成的数据 manifest。
-# 路径为示例，请填写实际位置；未知高程转换和未确认标志保留原值。
-# 空格 / Tab 分隔的逐图 TXT 需要先应用已提供的 records.py 解析修改。
-# 不改写原 train.yaml。旧 manifest / 特征缓存不能直接复用。
-schema_version: 1
-seed: 20261104
-synthetic: false
+# sequence 划分的完整参考配置：只写与 train.yaml 不同的项，其余继承（推荐改用更精简的 configs/mlp.yaml）。
+# 路径为示例，请填写实际位置；未知高程转换和未确认标志保留原值。旧 manifest / 特征缓存不能直接复用。
+base: train.yaml
 output: artifacts/real_sequence
 data:
   root: 'D:/SCC_data'
-  # auto 只识别明确的 CSV 表头或 key=value 多帧块，无法识别时中止。
-  record_format: auto
-  mapping_confirmed: false
-  image_regex: '(?P<sequence>sequence[^/]+)/(?P<frame>\d+)\.(?:png|jpg|jpeg|tif|tiff)$'
-  # 多帧 TXT 没有 sequence 时必须配置文件到 sequence 的显式映射。
-  sequence_by_file: {}
   per_image_txt: true
-  groups:
-    DS: {directory: day/IR/slant, records: day_IR_slant.txt, dayOrNight: 0, isSlant: 1, expected_isEO: 1}
-    DV: {directory: day/IR/vertical, records: day_IR_vertical.txt, dayOrNight: 0, isSlant: 0, expected_isEO: 0}
-    NS: {directory: night/IR/slant, records: night_IR_slant.txt, dayOrNight: 1, isSlant: 1, expected_isEO: 1}
-    NV: {directory: night/IR/vertical, records: night_IR_vertical.txt, dayOrNight: 1, isSlant: 0, expected_isEO: 0}
 geo:
   satellite: 'D:/SCC_data/maps/satellite.tif'
   dsm: 'D:/SCC_data/maps/dsm.tif'
-  # error/embedded/sidecar；冲突默认报错，报告两套变换和 CRS。
-  authority: error
-  dsm_authority: error
-  vertical_confirmed: false
-  platform_datum: normal_height_unconfirmed
-  dsm_datum: unknown
-  dsm_unit_to_m: 1.0
-  dsm_to_platform_offset_m: null
-  # 正常高转椭球高用于 ECEF 射线；仅可填写已核验的局部高程异常值。
-  normal_to_ellipsoid_m: null
-  flat_fallback: false
-  flat_ground_normal_m: null
-  ray_step_m: 10.0
-  max_ray_m: 30000.0
-  boundary_samples_per_edge: 12
-pose:
-  calibration_confirmed: false
-  version: candidate_axes_v1_UNCONFIRMED
-  # 列向量、主动旋转、NED；ZYX 欧拉顺序尚待标定核验。
-  euler_order: ZYX
-  eo_inns_from_cam: [[0, 0, 1], [1, 0, 0], [0, 1, 0]]
-  inns_from_mount: [[0, 0, -1], [0, 1, 0], [1, 0, 0]]
-  sensor_from_cam: [[0, 0, 1], [1, 0, 0], [0, 1, 0]]
-preprocess:
-  deployment_confirmed: false
-  mode: deployment_compatible
-  size: 336
-  query_crop: center_square_snapshot
-  query_resize: PIL_BICUBIC
-  reference_rotate: PIL_BICUBIC
-  candidate_resize: CV2_LINEAR
-  # 新共享适配器按图像右轴投影计算每帧角度；旧 backends.py 的 yaw 未提供。
-  heading: image_right_projected
-  mean: [0.485, 0.456, 0.406]
-  std: [0.229, 0.224, 0.225]
-  intensity:
-    ir: {uint8: [0, 255], uint16: null, float: null, nodata: null}
-    satellite: {uint8: [0, 255], uint16: null, float: null, nodata: null}
-  intrinsics_override: null
-  distortion: null
-candidates:
-  protocol: original_prior
-  # 搜索窗由先验生成，禁止验证/测试强插 GT。明确的共享新协议，旧窗口大小待核验。
-  search_radius_m: 6000
-  sizes_m: [500, 750, 1000]
-  height_offsets_m: [0]  # 固定候选边长，不启用高度缩放
-  reference_agl_m: null
-  overlap: 0.5
-  min_valid_fraction: 0.9
-  max_per_query: 12000
-  simulated_horizontal_m: [3700, 5600]
-  simulated_height_m: 200
-  max_window_pixels: 16000000
-labels:
-  positive_coverage: 0.8
-  negative_coverage: 0.05
-  max_area_ratio: 4.0
-  max_center_distance_ratio: 1.0
 split:
   mode: sequence
   # 此模式不需要区域 GeoJSON；同名 sequence 在四类数据中保持同一划分。
-  regions_geojson: null
-  buffer_m: 200
-  sequence_exclusive: true
   # 以下只是示例：覆盖实际出现的所有序列名，数量可以因类别而不同。
   sequence_splits:
     sequence1: train
     sequence2: train
     sequence3: val
     sequence4: test
-model:
-  source: vendor/dinov2
-  checkpoint: weights/dinov2_vitl14_pretrain.pth
-  name: dinov2_vitl14
-  source_commit: '7764ea0f912e53c92e82eb78a2a1631e92725fc8'
-  checkpoint_sha256: d5383ea8f4877b2472eb973e0fd72d557c7da5d3611bd527ceeb1d7162cbf428
-  deployed_backbone_confirmed: false
-  input_dim: 1024
-  hidden_dim: 512
-  output_dim: 512
-  dropout: 0.0
-  gem_p: 4.0
-extract:
-  batch_size: 8
-  amp: true
-  retries: 2
-train:
-  device: cuda:0
-  epochs: 50
-  batch_size: 8
-  lr: 0.001
-  weight_decay: 0.01
-  temperature: 0.07
-  patience: 8
-  scheduler: cosine
-  hard_negative_count: 64
-  hard_refresh_epochs: 2
-  # 当前实现严格的单向组内多正样本损失，无隐含跨帧负例。
-  loss: grouped_multi_positive

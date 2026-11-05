@@ -8,7 +8,7 @@ data:
   per_image_txt: true
   mapping_confirmed: false      # 核对 mapping_report 后置 true
 
-geo:
+geo:                            # 卫星/DSM：推理同源取图 + 真值足迹标签
   satellite: 'D:/SCC_data/maps/satellite.tif'
   dsm: 'D:/SCC_data/maps/dsm.tif'
   vertical_confirmed: false
@@ -20,18 +20,24 @@ pose:
 
 preprocess:
   deployment_confirmed: false
-  intensity:
-    # 卫星只用第1波段（与推理 image_bands: [1,1,1] 一致）。非 uint8 必须填写真实取值范围，
-    # 与推理 image_value_range 相同；范围过小会使候选图全白、特征失效（prepare 会报错并给出建议值）。
-    satellite: {uint8: [0, 255], uint16: null, float: null, nodata: null}
+
+# ↓↓ 与部署 naviParams.txt 的 infrared 段逐项相同（照抄部署值）。候选块由推理原代码生成。
+inference:
+  pose_priori: yp
+  retrieval_overlap_percent: 50
+  reference:
+    window_m: 600               # 部署的 reference.window_m（启用 profile 时为 search_window_m）
+    image_bands: [1, 1, 1]
+    image_value_range: null     # 非 uint8 卫星必填，例如 [0, 4095]；填错会使候选图全白
+  camera:
+    reference_window_scale: 1.2
+    nadir_reference_alignment: false
+  camera_by_group: {}           # 部署对垂直组(DV/NV)另有设置时在此按组覆盖
 
 candidates:
-  search_radius_m: 6000         # 先验周围搜索半径；越大候选越多（约与半径平方成正比）
-  sizes_m: [500, 750, 1000]
-  height_offsets_m: [0]
-  overlap: 0.5
+  train_window_m: 1200          # 仅训练集用更大搜索窗（更多负例、斜视帧也有正例）；验证/测试=推理窗口。越大越慢
   train_negatives: 128          # 训练集每查询：全部正例 + 128 个负例（一半最近、一半随机）
-  eval_query_stride: 5          # 验证/测试每条序列每 5 帧取 1 帧，保留完整候选网格
+  eval_query_stride: 5          # 验证/测试每条序列每 5 帧取 1 帧
 
 split:
   mode: sequence
@@ -45,7 +51,3 @@ split:
 model:
   checkpoint: 'D:/SCC_Loc/weights/dinov2_vitl14_pretrain.pth'
   checkpoint_sha256: d5383ea8f4877b2472eb973e0fd72d557c7da5d3611bd527ceeb1d7162cbf428
-
-train:
-  epochs: 50
-  lr: 0.001

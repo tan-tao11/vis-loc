@@ -72,8 +72,6 @@ def static_checks(c):
             if not np.allclose(K[2], [0, 0, 1]) or abs(np.linalg.det(K)) < 1e-12:
                 raise ValueError('Expected nonsingular standard pinhole K with last row [0,0,1]')
         except (ValueError, TypeError) as e: add('error', 'preprocess.intrinsics_override', str(e))
-    if any(c['candidates']['height_offsets_m']) and not c['candidates'].get('reference_agl_m'):
-        add('warning', 'candidates.reference_agl_m', 'Height-dependent candidate scaling needs nominal AGL before formal preparation')
     if c['split'].get('mode', 'geographic') == 'geographic' and not c['split'].get('regions_geojson'):
         add('warning', 'split.regions_geojson', 'Geography split is needed for training, but not for this diagnostic')
     return issues

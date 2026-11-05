@@ -4,7 +4,8 @@ import pytest
 from shapely.geometry import box, mapping
 from common import config, ROOT, require_real_ready, verify_manifest
 from records import parse_records, scan
-from prepare_dataset import label, split_audit, prepare, protocol_record
+from prepare_dataset import label, split_audit, prepare
+from scc_inference import telemetry
 from synthetic import make_fixture
 
 def test_alias_and_multiple_records(tmp_path):
@@ -25,11 +26,10 @@ def test_labels_and_leakage():
 def test_real_guard_and_no_gt_prior():
     c = config(ROOT/'configs/train.yaml')
     with pytest.raises(ValueError, match='blocked'): require_real_ready(c)
-    r = dict(droneLongitude=87., droneLatitude=42., droneAltitude=2000., droneLongitude_gt=90.)
-    cfg = dict(c['candidates'], protocol='simulated_prior')
-    p1 = protocol_record(r, cfg, 1, 'DS/s1/1'); r['droneLongitude_gt'] = 0.
-    p2 = protocol_record(r, cfg, 1, 'DS/s1/1')
-    assert p1['droneLongitude'] == p2['droneLongitude']
+    r = dict(droneLongitude=87., droneLatitude=42., droneAltitude=2000., droneLongitude_gt=90., droneLatitude_gt=40.,
+             sensorYaw=0, sensorPitch=0, sensorRoll=0, innsYaw=1, innsPitch=-80, innsRoll=0, hfov=50, vfov=40)
+    t1 = telemetry(r); r.update(droneLongitude_gt=0., droneLatitude_gt=0.)
+    assert telemetry(r) == t1 and t1['lon'] == 87. and t1['lat'] == 42.  # search uses the prior only
 
 def test_synthetic_mapping_preparation(tmp_path):
     cfgfile = make_fixture(tmp_path); c = config(cfgfile); report = scan(c)

@@ -62,7 +62,7 @@ powershell -ExecutionPolicy Bypass -File scripts\run_mlp.ps1 -EnvDir D:\SCC_Retr
 powershell -ExecutionPolicy Bypass -File scripts\run_mlp.ps1 -EnvDir D:\SCC_Retrieval\env
 ```
 
-候选数量主要由 `search_radius_m`、`sizes_m`、`overlap` 决定；训练集每查询只保留全部正例＋`train_negatives` 个负例，验证/测试按 `eval_query_stride` 抽帧并保留完整候选网格。prepare 报告 `preparation_report.json` 中的 `candidates_per_split` 和 `satellite_intensity` 可直接核对数量和卫星强度区间。说明见 [训练推理对齐](docs/训练推理对齐.md) 末节。
+候选块由推理原代码生成（地图网格、搜索窗、旋转、块尺寸、重叠、黑边过滤都与部署相同），`inference` 段照抄部署 naviParams 的 infrared 段即可。训练集可用更大的 `train_window_m` 并只保留全部正例＋`train_negatives` 个负例；验证/测试使用推理窗口，按 `eval_query_stride` 抽帧。`preparation_report.json` 中的 `candidates_per_split`、`covered_queries`、`block_side_m`、`satellite_intensity` 可直接核对。说明见 [训练推理对齐](docs/训练推理对齐.md) 末节。
 
 ## 1. 离线服务器恢复
 

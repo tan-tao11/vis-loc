@@ -1,9 +1,7 @@
 """Lean MLP config inheritance, train-candidate subsampling and the satellite intensity guard."""
 import numpy as np
 import pytest
-from rasterio.io import MemoryFile
 from rasterio import Affine
-from types import SimpleNamespace
 from common import config, ROOT
 from prepare_dataset import subsample_train, satellite_intensity_check, prepare
 from tests.test_sequence_split import sequence_fixture
@@ -14,6 +12,7 @@ def test_mlp_config_inherits_train_defaults():
     assert 'base' not in lean and lean['model']['gem_p'] == full['model']['gem_p']
     assert lean['labels'] == full['labels'] and lean['extract'] == full['extract']
     assert lean['split']['sequence_splits'] and lean['candidates']['train_negatives'] == 128
+    assert lean['inference']['reference']['georeference'] == 'auto' and lean['inference']['camera']['reference_window_scale'] == 1.2
     assert not any(lean[s][k] for s, k in [('data', 'mapping_confirmed'), ('pose', 'calibration_confirmed'),
         ('geo', 'vertical_confirmed'), ('preprocess', 'deployment_confirmed'), ('model', 'deployed_backbone_confirmed')])
 
@@ -38,15 +37,21 @@ def test_prepare_with_train_negatives(tmp_path):
         else: assert -1 in labels or labels.count(0) > 4  # val/test keep the full grid
 
 
-@pytest.mark.parametrize('dtype,spec,bad', [
-    ('uint16', {'uint16': [0, 255], 'nodata': None}, True),     # real range ~ thousands -> pure white
-    ('uint16', {'uint16': [0, 4000], 'nodata': None}, False),
-    ('float32', {'float': [0, 1], 'nodata': None}, True)])
-def test_intensity_guard_flags_white_tiles(dtype, spec, bad):
+@pytest.mark.parametrize('dtype,value_range,bad', [
+    ('uint16', [0, 255], True),      # real range ~ thousands -> pure white tiles
+    ('uint16', [0, 4000], False),
+    ('float32', [0, 1], True),
+    ('uint16', None, 'needs')])      # deployed GeoReference refuses non-uint8 without a range
+def test_intensity_guard_flags_white_tiles(tmp_path, dtype, value_range, bad):
+    import rasterio
     a = np.random.default_rng(0).uniform(500, 3500, (300, 300)).astype(dtype)
-    with MemoryFile() as mem, mem.open(driver='GTiff', width=300, height=300, count=1, dtype=dtype, transform=Affine.identity()) as ds:
-        ds.write(a, 1); raster = SimpleNamespace(ds=ds)
-        if bad:
-            with pytest.raises(ValueError, match='saturates'): satellite_intensity_check(raster, spec)
-        else:
-            assert satellite_intensity_check(raster, spec)['mapped_white_fraction'] < .1
+    f = tmp_path/'s.tif'
+    with rasterio.open(f, 'w', driver='GTiff', width=300, height=300, count=1, dtype=dtype,
+                       transform=Affine(1, 0, 0, 0, -1, 300), crs='EPSG:32645') as ds: ds.write(a, 1)
+    ref = {'image': str(f), 'image_bands': [1, 1, 1], 'image_value_range': value_range}
+    if bad == 'needs':
+        with pytest.raises(ValueError, match='image_value_range'): satellite_intensity_check(ref)
+    elif bad:
+        with pytest.raises(ValueError, match='saturates'): satellite_intensity_check(ref)
+    else:
+        assert satellite_intensity_check(ref)['mapped_white_fraction'] < .1

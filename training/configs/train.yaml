@@ -45,34 +45,34 @@ pose:
   sensor_from_cam: [[0, 0, 1], [1, 0, 0], [0, 1, 0]]
 preprocess:
   deployment_confirmed: false
-  mode: deployment_compatible
-  size: 336
-  query_crop: center_square_snapshot
-  query_resize: PIL_BICUBIC
-  reference_rotate: PIL_BICUBIC
-  candidate_resize: CV2_LINEAR
-  # 新共享适配器按图像右轴投影计算每帧角度；旧 backends.py 的 yaw 未提供。
-  heading: image_right_projected
+  size: 336                       # 查询：中心正方形裁剪 + PIL BICUBIC；候选：cv2 LINEAR（同推理）
   mean: [0.485, 0.456, 0.406]
   std: [0.229, 0.224, 0.225]
   intensity:
     ir: {uint8: [0, 255], uint16: null, float: null, nodata: null}
-    satellite: {uint8: [0, 255], uint16: null, float: null, nodata: null}
+    satellite: {uint8: [0, 255], uint16: null, float: null, nodata: null}  # 仅 validate_geometry 叠加图使用
   intrinsics_override: null
   distortion: null
+# 与部署 naviParams.txt 的 infrared 段保持一致：同名字段直接照抄部署值。
+# 候选块完全按推理生成（同一地图网格/搜索窗/旋转/块尺寸/重叠/黑边过滤），见 scc_inference.py。
+inference:
+  pose_priori: yp                 # infrared.pose_priori
+  retrieval_overlap_percent: 50   # tuning.retrieval_overlap_percent
+  reference:                      # infrared.reference（image/dsm 取自上面的 geo.satellite / geo.dsm）
+    georeference: auto
+    window_m: 600                 # reference.window_m；启用 profile 时填 search_window_m
+    image_bands: [1, 1, 1]
+    image_value_range: null       # 非 uint8 卫星必填，与部署一致
+    # working_crs / resolution_m / nodata / image_tfw / image_prj 等按部署值照填
+  camera:                         # infrared.camera
+    reference_window_scale: 1.2
+    nadir_reference_alignment: false
+    # optical_axis_in_inns: [0, 0, 1]
+  camera_by_group: {}             # 可选：按组覆盖 camera，如 DV: {optical_axis_in_inns: [0, 0, 1]}
 candidates:
-  protocol: original_prior
-  # 搜索窗由先验生成，禁止验证/测试强插 GT。明确的共享新协议，旧窗口大小待核验。
-  search_radius_m: 6000
-  sizes_m: [500, 750, 1000]
-  height_offsets_m: [-200, 0, 200]
-  reference_agl_m: null
-  overlap: 0.5
-  min_valid_fraction: 0.9
-  max_per_query: 12000
-  simulated_horizontal_m: [3700, 5600]
-  simulated_height_m: 200
-  max_window_pixels: 16000000
+  train_window_m: null            # 训练集搜索窗边长；null=与推理相同。验证/测试始终用推理窗口
+  train_negatives: null           # 训练集每查询保留全部正例+N个负例；null=全部
+  eval_query_stride: 1            # 验证/测试每条序列每k帧取1帧
 labels:
   positive_coverage: 0.8
   negative_coverage: 0.05

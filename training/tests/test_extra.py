@@ -4,7 +4,6 @@ from rasterio.transform import from_origin
 from pyproj import Transformer
 from common import config, ROOT
 from geometry import GeoRaster, camera_rotation, reference_angle
-from preprocess import rotation_affine
 from synthetic import write_tiff, make_fixture
 from records import scan
 
@@ -19,11 +18,6 @@ def test_nadir_heading_sign_and_grid_convergence(tmp_path, yaw):
     with GeoRaster(f) as sat:
         angle = reference_angle(r, R, sat, 0.)
         assert abs((angle-yaw+180) % 360-180) < .01
-        inverse, _ = rotation_affine(100, 100, angle)
-        # After rotating the reference, projected image right points along +pixel x.
-        right_pixel = np.array([R[1, 0], -R[0, 0]])
-        aligned = np.linalg.inv(inverse)[:2, :2] @ right_pixel
-        assert aligned[0] > .999 and abs(aligned[1]) < .001
 
 def test_per_image_adapter_and_mismatch(tmp_path):
     cf = make_fixture(tmp_path); c = config(cf); report = scan(c); assert not report['errors']

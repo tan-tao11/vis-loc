@@ -9,7 +9,7 @@ from PIL import Image, ImageDraw
 import torch
 from common import digest, write_json
 from lora_data import OnlineImages
-from preprocess import query_image, candidate_image, tensor_image
+from preprocess import query_image, tensor_image
 
 
 def validate_augmentation_settings(settings):
@@ -80,7 +80,10 @@ class AugmentedImages(OnlineImages):
     def raw(self,group,index=None):
         c=self.config
         if index is None: u,_=query_image(group['image'],c['preprocess'])
-        else: u,_=candidate_image(self.satellite,group['candidates'][index],c['preprocess'],c['candidates']['max_window_pixels'])
+        else:
+            u=self.tiles.tile(group,index,c['preprocess']['size'])
+            # image_bands [1,1,1] gives identical channels; true RGB maps fall back to grey for augmentation.
+            if u.ndim==3: u=u[...,0].copy() if (u[...,0]==u[...,1]).all() and (u[...,0]==u[...,2]).all() else cv2.cvtColor(u,cv2.COLOR_BGR2GRAY)
         return u
 
     def read(self,group,index=None):

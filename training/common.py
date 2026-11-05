@@ -87,7 +87,7 @@ def verify_inputs(fp):
         if not Path(p).is_file() or sha256(p) != h:
             raise ValueError('Input changed or missing; rebuild manifest/cache: ' + p)
 
-GENERATOR_FILES = ('records.py', 'geometry.py', 'preprocess.py', 'prepare_dataset.py')
+GENERATOR_FILES = ('records.py', 'geometry.py', 'preprocess.py', 'prepare_dataset.py', 'scc_inference.py', 'scc_geodata.py')
 
 def generator_identity():
     return {name: sha256(ROOT/name) for name in GENERATOR_FILES}

@@ -14,8 +14,8 @@ Acquisition (no confirmed track) works for both random and slowly drifting prior
   and for slowly drifting errors (the truth stays at a nearly fixed offset from it).
 * smooth: search only the smoothed centre; fastest for independent errors, fails for drifting ones.
 * hybrid: alternate scan and smooth frames.
-Simulated score (100 m/frame, S-curves, 70% retrieval success, 2 km window): scan 0.55 for both
-independent and drifting errors; smooth 0.80 independent / 0.00 drifting; hybrid 0.77 / 0.39.
+Simulated score with scan (100 m/frame, S-curves, 70% retrieval success; independent / drifting
+errors): 2 km window 0.49 / 0.53, 3 km 0.67 / 0.75, 4 km 0.75 / 0.84. smooth fails on drifting errors.
 A first acquisition fix is only TENTATIVE; it becomes a track after a second consistent fix in the
 small window around it, so one wrong match cannot start a wrong track.
 
@@ -63,13 +63,17 @@ def _robust_line(n, v, iterations=3):
 
 
 def scan_offsets(radius, window, overlap=0.1):
-    """Tile centres (dx, dy) covering a disk of `radius`: centre first, then rings outward."""
-    step = max(1., window*(1-overlap)); out = [(0., 0.)]; k = 1
-    while (k-0.5)*step <= radius:
-        count = max(6, int(math.ceil(2*math.pi*k)))
-        out += [(k*step*math.cos(2*math.pi*(i+0.5*(k % 2))/count), k*step*math.sin(2*math.pi*(i+0.5*(k % 2))/count))
-                for i in range(count)]
-        k += 1
+    """Tile centres (dx, dy) covering a disk of `radius`, nearest first.
+
+    Square grid with spacing step = window*(1-overlap). Every grid cell (side `step`) that touches
+    the disk is kept; each cell lies inside its window, so the disk is covered without gaps.
+    """
+    step = max(1., window*(1-overlap)); n = int(math.ceil(radius/step + 0.5)); out = []
+    for i in range(-n, n+1):
+        for j in range(-n, n+1):
+            x, y = i*step, j*step
+            if math.hypot(max(abs(x)-step/2, 0.), max(abs(y)-step/2, 0.)) <= radius: out.append((x, y))
+    out.sort(key=lambda p: (round(math.hypot(*p), 6), math.atan2(p[1], p[0])))
     return out
 
 

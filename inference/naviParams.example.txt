@@ -40,7 +40,8 @@ infrared:
     # DSM仅tif时要求内嵌地理信息。window_m是飞机先验周围总地图边长。
   # 先验经纬度误差可达2-3海里、高度±200m（prior_tracker.py）：定位成功并经下一帧确认后，以上次定位+速度为中心小窗口跟踪；
   # 捕获阶段在平滑先验周围逐帧扫描 max_window_m 大小的窗口（对随机和连续漂移的先验误差都有效）。
-  # max_window_m 按单帧 10 秒预算尽量取大（模拟：2000→3000 m 得分约 0.55→0.72），看日志 [PRIOR_TRACK]/[NAV_TIMING]。
+  # max_window_m 按单帧 10 秒预算尽量取大（模拟：2000/3000/4000 m 得分约 0.5/0.7/0.8），看日志 [PRIOR_TRACK]/[NAV_TIMING]。
+  # 每帧块数 ≈ (2×窗口/块边长−1)²，垂直视角块边长 ≈ 0.37×AGL。
   prior_tracking: {enabled: true, acquisition: scan, prior_error_m: 5600, altitude_error_m: 200,
                    min_window_m: 600, max_window_m: 2000, min_fix_inliers: 40}
   camera:

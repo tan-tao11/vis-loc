@@ -23,12 +23,13 @@ class PriorTrackerTests(unittest.TestCase):
         self.assertLess(abs(s['altitude']-1000.), 120.)
 
     def test_scan_tiles_cover_error_disk(self):
-        tiles = scan_offsets(5600., 2000., 0.1)
-        self.assertEqual(tiles[0], (0., 0.))
-        for a in np.linspace(0, 2*math.pi, 73):
-            for r in (0., 2000., 4000., 5600.):
-                p = (r*math.cos(a), r*math.sin(a))
-                self.assertTrue(any(max(abs(p[0]-dx), abs(p[1]-dy)) <= 1000. for dx, dy in tiles))
+        rng = np.random.default_rng(0); r = 5600*np.sqrt(rng.random(50000)); a = rng.uniform(0, 2*math.pi, 50000)
+        pts = np.stack([r*np.cos(a), r*np.sin(a)], 1)
+        for window in (1500., 2000., 3000., 4000., 6000., 12000.):
+            tiles = np.array(scan_offsets(5600., window, 0.1)); self.assertEqual(tuple(tiles[0]), (0., 0.))
+            covered = np.zeros(len(pts), bool)
+            for dx, dy in tiles: covered |= (np.abs(pts[:, 0]-dx) <= window/2) & (np.abs(pts[:, 1]-dy) <= window/2)
+            self.assertTrue(covered.all(), window)
 
     def test_scan_follows_drifting_bias(self):
         """Continuous (drifting) prior error: smoothing alone never finds it, scanning does."""

@@ -70,6 +70,15 @@ def contact_sheet(manifest, output, evaluation=None, mode=None):
     draw.text((650, 12), ('mode: '+mode+' | worst query per group in '+report['split']) if evaluation else 'Candidate preview (NOT ranking; manifest order)', fill='#ffcb55')
     satellite = GeoRaster(path(c['geo']['satellite']), c['geo']['authority'])
     try:
+        from prepare_dataset import satellite_intensity_check
+        try:
+            stats = satellite_intensity_check(satellite, c['preprocess']['intensity']['satellite'])
+            draw.text((15, 30), f"satellite {stats['dtype']} band 1/{stats['band_count']} range {stats['configured_range']} "
+                      f"raw p0.5/p50/p99.5 {[round(v, 2) for v in stats['raw_percentiles'].values()]} "
+                      f"white {stats['mapped_white_fraction']:.2f} black {stats['mapped_black_fraction']:.2f}", fill='#a0b0c4')
+        except ValueError as e:
+            errors.append({'panel': 'satellite_intensity', 'error': str(e)})
+            draw.text((15, 30), 'SATELLITE INTENSITY RANGE WRONG (tiles saturate); see contact_sheet.png.json', fill='#ff7777')
         _draw_rows(m, c, selected, rows_by_id, evaluation, satellite, canvas, draw, errors)
     finally: satellite.close()
     Path(output).parent.mkdir(parents=True, exist_ok=True); canvas.save(output)
@@ -92,8 +101,10 @@ def _draw_rows(m, c, selected, rows_by_id, evaluation, satellite, canvas, draw, 
         draw.text((15, top+214), g['id'], fill='white')
         cs = g['candidates']; order = rows_by_id[g['id']]['order'] if evaluation else list(range(len(cs)))
         if cs:
-            bounds = np.array([cand['box'] for cand in cs])
-            overview_box = [int(bounds[:, 0].min()), int(bounds[:, 1].min()), int(bounds[:, 2].max()), int(bounds[:, 3].max())]
+            # Overview around the shown candidates only; the whole search window can exceed the pixel budget.
+            bounds = np.array([cs[j]['box'] for j in order[:3]])
+            lo, hi = bounds[:, :2].min(0), bounds[:, 2:].max(0); pad = (hi-lo)*.5
+            overview_box = [int(lo[0]-pad[0]), int(lo[1]-pad[1]), int(hi[0]+pad[0]), int(hi[1]+pad[1])]
             try:
                 overview, overview_mask, _ = local_rotated_crop(satellite, np.array(cs[0]['inverse']), overview_box,
                     c['preprocess']['intensity']['satellite'], c['candidates']['max_window_pixels'])
@@ -129,7 +140,9 @@ def _draw_rows(m, c, selected, rows_by_id, evaluation, satellite, canvas, draw, 
             canvas.paste(tile, (x, top))
             prefix = f'rank {k+1}' if evaluation else f'preview {j}'
             draw.text((x, top+214), f"{prefix} label {cand['label']} cov {cand['coverage']:.2f}", fill='white')
-            draw.text((x, top+231), f"{cand['scale_m']:.1f} m / valid {cand['valid_fraction']:.3f}", fill='#a0b0c4')
+            white = float((img[display_mask] == 255).mean()) if display_mask.any() else 0.
+            draw.text((x, top+231), f"{cand['scale_m']:.1f} m / valid {cand['valid_fraction']:.3f} / white {white:.2f}",
+                      fill='#ff7777' if white > .9 else '#a0b0c4')
             if evaluation and 'scores' in rows_by_id[g['id']]:
                 draw.text((x, top+247), f"index {j} / score {rows_by_id[g['id']]['scores'][j]:.6f}", fill='#ffcb55')
         r = g['record']; info = [g['group'], f"rotate {g['angle_deg']:.3f} deg", f"isEO={r['isEO']}",

@@ -15,6 +15,9 @@ def inspect(c):
         try:
             with GeoRaster(path(c['geo'][name]), c['geo']['authority' if name == 'satellite' else 'dsm_authority']) as r:
                 report['rasters'][name] = r.metadata()
+                if name == 'satellite':
+                    from prepare_dataset import satellite_intensity_check
+                    report['rasters'][name]['intensity'] = satellite_intensity_check(r, c['preprocess']['intensity']['satellite'])
         except Exception as e:
             report['errors'].append({'reason': 'geo_metadata', 'raster': name, 'detail': str(e)})
     count = len(report['pairs']); maximum = c['candidates']['max_per_query']

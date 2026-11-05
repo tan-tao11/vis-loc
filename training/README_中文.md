@@ -53,6 +53,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File D:\SCC_bundle\offline_instal
 
 PyTorch2.5.1+cu118 / torchvision0.20.1+cu118 是本准备机已验证组合，目标服务器仍需验收。采用 CUDA11.8 的保守配套 Windows 驱动基线 522.06；较旧驱动的兼容情况需另验证，脚本不擅自安装或更换 NVIDIA 驱动。不要把 nvidia-smi 显示的最高 CUDA 版本理解为必须安装相同版本的 Toolkit。
 
+## 0. 精简 MLP 流程（推荐）
+
+只需编辑 `configs/mlp.yaml`（数据/卫星/DSM 路径、序列划分、DINO 权重、确认标志），其余参数继承 `configs/train.yaml`。先小样本检查，再全量：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run_mlp.ps1 -EnvDir D:\SCC_Retrieval\env -Limit 12 -Steps prepare
+powershell -ExecutionPolicy Bypass -File scripts\run_mlp.ps1 -EnvDir D:\SCC_Retrieval\env
+```
+
+候选数量主要由 `search_radius_m`、`sizes_m`、`overlap` 决定；训练集每查询只保留全部正例＋`train_negatives` 个负例，验证/测试按 `eval_query_stride` 抽帧并保留完整候选网格。prepare 报告 `preparation_report.json` 中的 `candidates_per_split` 和 `satellite_intensity` 可直接核对数量和卫星强度区间。说明见 [训练推理对齐](docs/训练推理对齐.md) 末节。
+
 ## 1. 离线服务器恢复
 
 复制整个交付目录到服务器，例如 `D:\SCC_bundle`。PowerShell 默认脚本策略若禁止运行，可仅对本次进程使用 `powershell -ExecutionPolicy Bypass -File ...`。不需要 Docker、WSL、NCCL、Triton 或编译 xFormers。

@@ -15,9 +15,22 @@ def path(value):
     p = Path(value)
     return p if p.is_absolute() else ROOT / p
 
+# Mappings replaced wholesale when overridden (their keys are data names, not settings).
+REPLACE_KEYS = ('sequence_splits', 'sequence_by_file')
+
+def merge_config(base, override):
+    out = dict(base)
+    for k, v in override.items():
+        out[k] = merge_config(base[k], v) if isinstance(v, dict) and isinstance(base.get(k), dict) and k not in REPLACE_KEYS else v
+    return out
+
 def config(filename):
+    """Load YAML; `base: other.yaml` (relative to this file) supplies every omitted setting."""
     with open(filename, encoding='utf-8-sig') as f:
         c = yaml.safe_load(f)
+    base = c.pop('base', None)
+    if base:
+        c = merge_config(config(Path(filename).parent/base), c)
     if c['schema_version'] != 1:
         raise ValueError('Unsupported config schema')
     return c
@@ -33,11 +46,11 @@ def digest(obj):
     return hashlib.sha256(json.dumps(obj, sort_keys=True, ensure_ascii=False,
                                     allow_nan=False).encode()).hexdigest()
 
-def write_json(filename, obj):
+def write_json(filename, obj, indent=2):
     p = Path(filename)
     p.parent.mkdir(parents=True, exist_ok=True)
     t = p.with_suffix(p.suffix + '.partial')
-    t.write_text(json.dumps(obj, indent=2, ensure_ascii=False, allow_nan=False), encoding='utf-8')
+    t.write_text(json.dumps(obj, indent=indent, ensure_ascii=False, allow_nan=False), encoding='utf-8')
     os.replace(t, p)
 
 def read_json(filename):

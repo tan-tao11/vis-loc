@@ -1,0 +1,51 @@
+# 精简 MLP 配置：只列出需要填写或常调的项，其余全部继承 train.yaml（base）。
+# 推荐流程：scripts/run_mlp.ps1 -EnvDir <环境> -Config configs/mlp.yaml
+base: train.yaml
+output: artifacts/mlp          # 每次实验换一个新目录；manifest/特征/训练结果都在这里
+
+data:
+  root: 'D:/SCC_data'
+  per_image_txt: true
+  mapping_confirmed: false      # 核对 mapping_report 后置 true
+
+geo:
+  satellite: 'D:/SCC_data/maps/satellite.tif'
+  dsm: 'D:/SCC_data/maps/dsm.tif'
+  vertical_confirmed: false
+  normal_to_ellipsoid_m: null
+  dsm_to_platform_offset_m: null
+
+pose:
+  calibration_confirmed: false
+
+preprocess:
+  deployment_confirmed: false
+  intensity:
+    # 卫星只用第1波段（与推理 image_bands: [1,1,1] 一致）。非 uint8 必须填写真实取值范围，
+    # 与推理 image_value_range 相同；范围过小会使候选图全白、特征失效（prepare 会报错并给出建议值）。
+    satellite: {uint8: [0, 255], uint16: null, float: null, nodata: null}
+
+candidates:
+  search_radius_m: 6000         # 先验周围搜索半径；越大候选越多（约与半径平方成正比）
+  sizes_m: [500, 750, 1000]
+  height_offsets_m: [0]
+  overlap: 0.5
+  train_negatives: 128          # 训练集每查询：全部正例 + 128 个负例（一半最近、一半随机）
+  eval_query_stride: 5          # 验证/测试每条序列每 5 帧取 1 帧，保留完整候选网格
+
+split:
+  mode: sequence
+  regions_geojson: null
+  sequence_splits:              # 覆盖实际出现的全部序列名
+    sequence1: train
+    sequence2: train
+    sequence3: val
+    sequence4: test
+
+model:
+  checkpoint: 'D:/SCC_Loc/weights/dinov2_vitl14_pretrain.pth'
+  checkpoint_sha256: d5383ea8f4877b2472eb973e0fd72d557c7da5d3611bd527ceeb1d7162cbf428
+
+train:
+  epochs: 50
+  lr: 0.001

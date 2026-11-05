@@ -6,8 +6,11 @@ byte copy; a test compares them). Coordinates are working-CRS metres, frames are
 
 * smooth: robust straight-line fit of the recent priors (x, y, altitude) against frame number,
   evaluated at the current frame. Independent errors shrink roughly with 1/sqrt(N).
-* track: after an accepted fix, centre = last fix + fitted velocity * frames elapsed, with a small
-  radius that grows per frame; falls back to smooth after too many frames without a fix.
+* track: after an accepted fix, centre = last fix + velocity * frames elapsed, with a small radius
+  that grows per frame. Velocity comes from the last two accepted fixes (follows turns); with only
+  one fix it falls back to the smoothed slope. Falls back to smooth after too many frames without a fix.
+  The smoothing itself is a straight line over `history` frames: turn bias is tens to ~200 m, small
+  against the km-level prior noise (simulated straight / 3.4 deg-per-frame / U-turn / S-curve).
 The search window side is 2*(radius + margin), clipped to [min_window_m, max_window_m];
 max_window_m is the per-frame time budget knob.
 """
@@ -55,6 +58,7 @@ class PriorTracker:
     def reset(self):
         self.priors = []          # (number, x, y, altitude)
         self.fix = None           # (number, x, y)
+        self.prev_fix = None
         self.last = None
 
     def _smooth(self, number):
@@ -85,9 +89,13 @@ class PriorTracker:
             gap = number - self.fix[0]
             radius = p['track_radius_m'] + p['track_growth_m']*gap
             if gap <= p['max_track_gap'] and radius < s['radius_m']:
-                state.update(mode='track', x=self.fix[1] + s['x_rate']*gap, y=self.fix[2] + s['y_rate']*gap, radius_m=radius)
+                vx, vy = s['x_rate'], s['y_rate']
+                if self.prev_fix is not None and 0 < self.fix[0]-self.prev_fix[0] <= p['max_track_gap']:
+                    d = self.fix[0]-self.prev_fix[0]   # velocity from the last two fixes follows turns
+                    vx, vy = (self.fix[1]-self.prev_fix[1])/d, (self.fix[2]-self.prev_fix[2])/d
+                state.update(mode='track', x=self.fix[1] + vx*gap, y=self.fix[2] + vy*gap, radius_m=radius)
             else:
-                self.fix = None
+                self.fix = self.prev_fix = None
         side = 2*(state['radius_m'] + p['margin_m'])
         state['window_m'] = float(min(max(side, p['min_window_m']), p['max_window_m']))
         state['number'] = number
@@ -101,5 +109,5 @@ class PriorTracker:
         if inliers < self.p['min_fix_inliers']: return False
         if math.hypot(x - s['smooth_x'], y - s['smooth_y']) > s['smooth_radius_m'] + self.p['margin_m']: return False
         if s['mode'] == 'track' and math.hypot(x - s['x'], y - s['y']) > 2*s['radius_m'] + self.p['margin_m']: return False
-        self.fix = (float(number), float(x), float(y))
+        self.prev_fix, self.fix = self.fix, (float(number), float(x), float(y))
         return True

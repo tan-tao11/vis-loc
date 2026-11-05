@@ -37,6 +37,17 @@ class PriorTrackerTests(unittest.TestCase):
         for n in range(31, 60): s = tr.predict(n, *noisy(rng, np.array([30.*n, 0.])), 1000.)
         self.assertEqual(s['mode'], 'smooth')                            # no fix for too long
 
+    def test_turning_track_uses_fix_velocity(self):
+        rng = np.random.default_rng(3); tr = PriorTracker(); pos = np.zeros(2); head = 0.; inside = []; locked = False
+        for n in range(200):
+            head += 0.06 if (n//40) % 2 else 0.; pos = pos + 150*np.array([math.cos(head), math.sin(head)])  # turns, 150 m/frame
+            s = tr.predict(n, *noisy(rng, pos), 1000.)
+            ok = max(abs(pos[0]-s['x']), abs(pos[1]-s['y'])) + 150 < s['window_m']/2
+            if locked: inside.append(ok)
+            if ok and tr.update(n, *(pos + rng.normal(0, 10, 2)), 100): locked = True
+        self.assertTrue(locked)
+        self.assertGreater(np.mean(inside), 0.9)
+
     def test_new_sequence_resets(self):
         tr = PriorTracker()
         for n in range(10): tr.predict(100+n, 1e4, 0., 1000.)

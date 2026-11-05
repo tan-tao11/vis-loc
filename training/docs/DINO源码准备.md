@@ -1,6 +1,6 @@
 # DINOv2 源码与权重身份
 
-本仓库的 `vendor/` 和 `weights/` 不入 Git。优先复用服务器已有资源，通过 `configs/train.yaml` 中 `model.source`、`model.checkpoint` 指向实际位置。
+本文命令在仓库的 `training/` 目录执行；下文的相对路径均以该目录为基准。`training/vendor/` 和 `training/weights/` 不入 Git。优先复用服务器已有资源，通过 `configs/train.yaml` 中 `model.source`、`model.checkpoint` 指向实际位置。
 
 训练默认使用非 register 的 DINOv2 ViT-L/14，固定源码版本为：
 

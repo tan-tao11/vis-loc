@@ -1,5 +1,7 @@
 # 红外—卫星检索头训练与 Windows 离线交付
 
+GitHub 仓库中，本训练工程位于 `training/`。以下源码相对路径和训练命令以该目录为基准；使用已安装的离线部署包时，工程目录仍是部署目标下的 `project/`。源码仓库不包含环境或离线安装材料。
+
 本工程默认冻结 DINOv2 ViT-L/14，训练两个独立 MLP 检索头；另提供在线微调 DINO 的 LoRA 备选方案。适用于四组单通道 IR（DS/DV/NS/NV）与单通道卫星候选图。当前交付是可运行工程、依赖和离线恢复工具；真实训练数据、DSM、安装标定和比赛机器最新修改版未随交接包提供。目标驱动后续由用户提供为 527.27，尚未在目标机实测。**没有已训练好的真实业务权重，也没有真实精度结论。**
 
 先看 `docs/验证状态.md`，它区分已执行检查和待服务器/真实数据核验的项目。`docs/方法与边界.md` 说明几何、数据、损失；`docs/接入说明.md` 说明实际源码接入点和 .so/Orin 边界。
@@ -31,7 +33,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File D:\SCC_bundle\offline_instal
 
 ## 交付物
 
-准备机工作区：`C:\Users\taizun\Documents\ChatGPT\IR_Retrieval`。
+准备机训练工作区：`C:\Users\taizun\Documents\ChatGPT\IR_Retrieval\training`。
 
 大文件交付目录：`D:\IR_Retrieval_delivery`，不包含真实数据。**按服务器已有权重的部署方式，当前交付包已移除 DINO 基座权重；安装后先配置服务器已有的 DINO 权重路径，再运行自检和训练。**
 

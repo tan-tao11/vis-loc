@@ -1,0 +1,141 @@
+简化版：估计正方形候选块边长 + 一个手动系数
+
+本版是上一版完整足迹/地图扩展方案的替代方案，不要叠加使用。
+若已经按上一版改过 backends.py/utils.py，请先恢复 before-slant 备份，再应用本版；保留其他此前已经验证的姿态/日志改动。
+若尚未应用上一版，直接在目前实际运行的原缓存上改。
+
+本版只改变SCC-Loc检索候选块尺寸，保持正方形，不改匹配函数或坐标还原，不自动改变搜索区域。使用接口FOV得到的K（若配置标定内参则以K为准）、现有姿态转换输出的有效光轴向下角、DSM给出的AGL，在局部平地近似下估计范围。不是完整DSM地形求交或透视矫正。
+垂直/近垂直图像正常处理。EO斜视按已确认的像素右=INS+Y、下=INS+Z约定使用innsRoll。非EO沿用现有光轴姿态，额外绕光轴转角按小滚转近似0；大安装滚转不能使用这个近似，需完整外参。不要在这里把droneYaw、sensorYaw和innsYaw重新相加。
+
+修改前：关闭官方评测程序；按日志 [UAVLOC] runtime=... 找到实际缓存；备份 adapter/backends.py、projects/SCC-Loc/utils.py 以及 naviParams.txt。无需删除缓存/.ready，不修改.so。
+
+1. 配置
+
+在实际生效的infrared.camera下新增一个参数，合并进现有节点，不重复创建camera：
+
+infrared:
+  pose_priori: yp
+  camera:
+    reference_window_scale: 1.2
+
+系数直接乘估计的候选块边长：1.0=估计边长；1.2=放大20%；1.5=放大50%；0.8=缩小20%，此时主动放弃一部分估计覆盖。建议从1.0或1.2检查。
+单块面积随系数平方变化。此系数不是候选数量、总搜索范围或输入图resize_ratio。
+本替换段不再乘原scc_crop_gain，避免两个系数叠加；原配置中的scc_crop_gain可保留供兼容，但不再决定此处候选块边长。
+斜视必须使用pose_priori:yp，并确保原姿态函数没有把所有帧强制设为-90度。
+
+2. 在 adapter/backends.py 的 class SCCBackend -> def localize 中
+
+找到 data = dict(...) 的构造（含rel_height=agl, yaw=yaw, pitch=elevation）。
+在该完整语句之后、if self.pose == "yp": 旋转参考图之前插入，保持8空格缩进：
+
+        data.update(
+            focal_y=float(K[1, 1]),
+            roll_deg=float(t["inns_roll"]) if bool(request["isEO"]) else 0.0,
+            reference_window_scale=float(self.camera.get("reference_window_scale", 1.2)),
+            is_slant=bool(request.get("isSlant", False)),
+            pose_known=(self.pose == "yp"),
+            map_hw=tuple(self.ref.image.shape[:2]))
+
+这里直接使用K[0,0]和K[1,1]，所以hfov/vfov已经通过原camera_matrix函数参与估算，不要再重复换算。K也允许已有标定参数覆盖FOV。
+map_hw记录旋转之前的地图尺寸，避免把旋转出来的黑边算成有效地图。
+
+3. 在 projects/SCC-Loc/utils.py 中增加函数
+
+将下面完整函数放在 def retrieval_all(...) 之前，保持顶层缩进。原文件已有math导入也可以保留一次。
+无需在缓存另建window_estimate.py；这个文件只是方便查看/复制相同函数。
+
+import math
+
+
+def estimate_reference_side(data, drone_size):
+    """Flat-ground bounding square; no map reading or matching changes.
+
+    Uses the existing effective optical elevation, K and query centre crop.
+    roll_deg is the image roll under the calibrated EO camera/INS convention.
+    For non-EO near-nadir images the caller supplies the small-roll approximation 0.
+    """
+    H = float(data['rel_height'])
+    fx = float(data['focal_len'])
+    fy = float(data['focal_y'])
+    alpha = math.radians(-float(data['pitch']))
+    roll = math.radians(float(data.get('roll_deg', 0)))
+    scale = float(data.get('reference_window_scale', 1.2))
+    if not all(math.isfinite(v) for v in (H, fx, fy, alpha, roll, scale)):
+        raise ValueError('WINDOW: nonfinite input')
+    if min(H, fx, fy, scale) <= 0 or not 0 < alpha <= math.pi/2 + 1e-6:
+        raise ValueError('WINDOW: invalid AGL, intrinsics, elevation or scale')
+    if data.get('is_slant', False) and not data.get('pose_known', False):
+        raise ValueError('WINDOW: slant images require pose_priori=yp')
+    # Match crop_center: odd requested sizes produce one fewer pixel.
+    crop_w = 2 * (int(drone_size[0]) // 2)
+    crop_h = 2 * (int(drone_size[1]) // 2)
+    if min(crop_w, crop_h) <= 0:
+        raise ValueError('WINDOW: empty query crop')
+    tx, ty = crop_w/(2*fx), crop_h/(2*fy)
+    cr, sr = abs(math.cos(roll)), abs(math.sin(roll))
+    tx, ty = cr*tx + sr*ty, sr*tx + cr*ty
+    if alpha <= math.atan(ty) + math.radians(2):
+        raise ValueError('WINDOW: query approaches horizon; this approximation is unsuitable')
+    sa, ca = math.sin(alpha), math.cos(alpha)
+    near_m = H*(ca-sa*ty)/(sa+ca*ty)
+    far_m = H*(ca+sa*ty)/(sa-ca*ty)
+    width_m = 2*H*tx/(sa-ca*ty)
+    height_m = far_m-near_m
+    side_m = scale*max(width_m, height_m)
+    print('[REF_WINDOW] AGL=%.1f alpha=%.2f roll=%.2f ground_W_H=(%.1f,%.1f)m scale=%.2f side=%.1fm'
+          % (H, math.degrees(alpha), math.degrees(roll), width_m, height_m, scale, side_m), flush=True)
+    return side_m
+
+4. 在同一个utils.py的retrieval_all()中替换尺寸计算段
+
+保留原来的：
+    drone_resolution, drone_size = resolution_size(uav_data, opt)
+    finescale = drone_resolution / ref_resolution
+
+从 view_size = drone_size * drone_resolution * opt.crop_gain 开始，到最后一行 block_size[1] = max(10, block_size[1]) 为止，整段替换为：
+
+    side_m = estimate_reference_side(uav_data, drone_size)
+    side_px = max(10, 2 * int(math.ceil(side_m / (2 * ref_resolution))))
+    h_ref, w_ref = ref_image.shape[:2]
+    angle = math.radians(uav_data["yaw"] if opt.pose_priori == "yp" else 0.0)
+    required_px = int(math.ceil(side_px * (abs(math.cos(angle)) + abs(math.sin(angle)))))
+    if (side_px > min(h_ref, w_ref) or
+            required_px > min(uav_data["map_hw"])):
+        raise ValueError(
+            "REF_WINDOW: block %.1fm needs unrotated map at least %.1fm per side; "
+            "increase search_window_m/reference.window_m or lower reference_window_scale"
+            % (side_m, required_px * ref_resolution))
+    block_size = [side_px, side_px]
+
+原来的step_size、MID、查询中心裁剪和特征提取继续保留。
+不要修改resolution_size或finescale，这个值还参与匹配图像缩放和坐标还原。只改变block_size。
+
+5. 让手动系数对应真正用于匹配的图块
+
+在原来的完整特征提取语句后：
+    gf, qf, shifts = extract_features(...原参数保持不动...)
+
+加一行：
+    shifts = None
+
+这是关闭SCC原SGVA排序后的平移和1.2倍放大；否则检索块由新系数决定，实际matching图块还会再变一次。若你们已经关闭SGVA，不必重复添加。
+本版仍为正方形，不需要上一版Match2Pos_all的矩形宽高与resize还原修改。
+
+6. 重启并检查
+
+用目标板的python3 -m py_compile检查修改的两个文件语法，然后完全退出并重启评测程序，重新加载Python模块。
+应出现类似：
+[REF_WINDOW] AGL=700.0 alpha=30.00 roll=0.00 ground_W_H=(867.0,1285.3)m scale=1.20 side=1542.3m
+
+AGL是高度差，不是无人机海拔；alpha是相对水平面的向下角，90表示垂直下视；side是单个候选块边长米数。
+该示例使用方形查询ROI、22.79度有效FOV、平地及零滚转，只是数值测试，不是实际帧定位结果。
+按相同条件，alpha=15.35度时边长可达约10.5公里；这源于远端射线接近地平线，不是单位错误。两度以内的近地平线射线直接拒绝，避免无穷大范围。
+
+重要边界：本版不移动或扩大旧局部地图的中心/搜索范围。窗口尺寸变大，不等于旧读取区域自动包含斜视地面足迹。报REF_WINDOW时，可以在既有配置中扩大实际生效的search_window_m（有active_profile时）或reference.window_m（无profile时），也可有意降低单块系数。旧版tuning对search_window_m可能有限制；不要直接写巨大数值绕过内存预算。
+日志里的“所需地图边长”只表示一个旋转方块在地图中有机会完整放下，不包含先验误差和斜视落地点的远移；地图即使足够大，搜索中心错误仍会漏掉正确区域。此处刻意保留旧搜索逻辑，满足简单手调单块的需求，不承诺修复所有覆盖问题。
+全黑/NoData区域仍由原候选生成逻辑处理。很斜视时把长足迹包成方形会纳入大量额外背景，缩到336像素会损失细节；本版是方便调参的近似，不保证精度/速度提升。
+
+如果此方案不合适，关闭程序后恢复本版修改前的两个备份文件及原配置，再重启即可。仅移除配置参数不能恢复旧公式，因为新函数默认系数仍为1.2。
+缓存修改只对当前缓存有效。确认后需重打包.so才能用于新的机器或清空后的缓存。
+
+验证：本地5项测试（含多个角度/滚转组合）通过；修改后源码副本语法检查通过；实际retrieval_all函数在模拟特征提取下验证了正方形尺寸和不改变finescale。未在比赛板真实GPU数据上运行。

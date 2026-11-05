@@ -1,0 +1,46 @@
+# YAML；根据地图、标定及官方初始化类型修改，不是已验收配置。
+version: 1
+device: cuda
+cpu_threads: 4
+batch_size: 8
+enabled_modalities: [0, 1]
+active_profile: ''
+active_dataset: ''
+weights:
+  root: ./weights
+timing_file: logs/timing.jsonl
+debug_matching: false  # 开启保存匹配输入/点/图像，影响耗时和磁盘。
+rgb:
+  project_root: ./projects/AnyVisLoc-Benchmark
+  pose_priori: unknown
+  reference:
+    georeference: auto
+    image: ./maps/scene/satellite.tif
+    dsm: ./maps/scene/dsm.tif
+    height_datum: normal_m
+    window_m: 600
+    image_bands: [1, 1, 1]
+    # image_tfw: ./maps/scene/satellite.tfw
+    # image_prj: ./maps/scene/satellite.prj
+    # 非uint8卫星需填写 image_value_range: [实际下限, 实际上限]
+  camera: {}
+  self_eval: {enabled: false, min_inliers: 30}
+infrared:
+  project_root: ./projects/SCC-Loc
+  pose_priori: yp
+  reference:
+    georeference: auto
+    image: ./maps/scene/satellite.tif
+    dsm: ./maps/scene/dsm.tif
+    height_datum: normal_m
+    window_m: 600
+    image_bands: [1, 1, 1]
+    # DSM仅tif时要求内嵌地理信息。window_m是飞机先验周围总地图边长。
+  camera:
+    reference_window_scale: 1.2
+    nadir_reference_alignment: false  # EO斜视保持false；近下视须先确认轴约定。
+    # 非EO且关闭近下视分支时，需要真实 optical_axis_in_inns。
+    # optical_axis_in_inns: [0, 0, 1]
+  self_eval: {enabled: false, min_inliers: 30, max_reprojection_px: 4}
+# 无profile时使用reference.window_m；有profile时其search_window_m覆盖读取范围。
+# 600m例子不适用于大先验误差/大斜视足迹；须据日志核对覆盖与内存。

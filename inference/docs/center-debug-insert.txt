@@ -1,0 +1,28 @@
+        mh, mw = self.ref.image.shape[:2]
+        res = self.ref.res
+        sx = self.ref.x0 + (mw - 1) * res / 2
+        sy = self.ref.y0 - (mh - 1) * res / 2
+        slon, slat = self.ref.inverse.transform(sx, sy)
+        px, py = self.ref.forward.transform(t["lon"], t["lat"])
+
+        vx, vy = self.api.view_center(
+            self.region, self.settings, data,
+            self.ref.x0, self.ref.y0, res, rotation)
+        ux, uy = cv2.invertAffineTransform(rotation) @ np.array([vx, vy, 1.0])
+        gx = self.ref.x0 + ux * res
+        gy = self.ref.y0 - uy * res
+        glon, glat = self.ref.inverse.transform(gx, gy)
+        inside = (-0.5 <= ux < mw - 0.5 and -0.5 <= uy < mh - 0.5)
+
+        print(f'[SEARCH_CENTER] frame={request["number"]} '
+              f'prior_lon_lat=({t["lon"]:.8f},{t["lat"]:.8f}) '
+              f'map_center_lon_lat=({slon:.8f},{slat:.8f}) '
+              f'map_W_H_m=({mw*res:.1f},{mh*res:.1f}) '
+              f'map_center_from_prior_m={math.hypot(sx-px, sy-py):.1f}', flush=True)
+        print(f'[VIEW_CENTER] lon_lat=({glon:.8f},{glat:.8f}) '
+              f'from_prior_m={math.hypot(gx-px, gy-py):.1f} '
+              f'from_map_center_m={math.hypot(gx-sx, gy-sy):.1f} '
+              f'inside_map_bounds={bool(inside)}', flush=True)
+        print(f'[CENTER_POSE] isEO={request["isEO"]} pose={self.pose} '
+              f'AGL={agl:.2f} yaw_used={yaw:.3f} elevation_used={elevation:.3f} '
+              f'inns_YPR=({t["inns_yaw"]:.3f},{t["inns_pitch"]:.3f},{t["inns_roll"]:.3f})', flush=True)

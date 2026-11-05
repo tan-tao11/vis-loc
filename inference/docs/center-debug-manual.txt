@@ -1,0 +1,26 @@
+适用：原部署版或刚提供的正方形窗口简化版；不是更早的完整足迹中心重定位版本。
+只增加打印，不调整位置、角度、地图窗口或模型输入。
+
+1. 退出官方评测程序，从 [UAVLOC] runtime=... 找到正在使用的缓存。
+2. 备份 <缓存>/adapter/backends.py。
+3. 打开该文件，找到 class SCCBackend 内的 def localize。
+4. 找到旋转参考图的 if self.pose == "yp" ... else ... 代码块。
+5. 将“插入代码.txt”全文放在这个 if/else 整块后、self.trace['prepare_s']=... 之前。
+   保持每行原有的缩进：首层8个空格。不要放进else分支，否则yp模式不会打印。
+   原 import 已有np、cv2和math，无需新依赖。
+6. 用 python3 -m py_compile 检查该文件语法；完全重启程序加载新Python模块。
+
+日志解释：
+- SEARCH_CENTER prior_lon_lat：接口实际传入的飞机位置先验。
+- map_center_lon_lat：实际读取的、旋转前的搜索地图矩形中心。边界裁剪可使其偏离先验。
+- map_W_H_m：当前搜索地图宽、高，单位米，不是单个候选块大小。
+- VIEW_CENTER lon_lat：调用与retrieval_all完全相同的view_center函数得到的画面中心地面投影，逆旋转后转成经纬度。保留原函数约一像素的整数化误差。
+- from_prior_m/from_map_center_m：投影坐标系中的水平距离，单位米。它们不是定位真值误差。
+- inside_map_bounds：画面中心是否在当前读取窗口矩形范围内，不代表整张查询足迹都在范围内，也不检查该点是否NoData。
+- CENTER_POSE：实际用于投影的高度差、yaw/elevation以及原始INS角，用来发现强制下视、角度误用等问题。
+
+重要：旧流程先按位置先验读取局部地图，随后才用view_center计算画面落地点；后者在SCC中用于PDE等计算，不会自动把已经读取的地图移过去。简化版窗口尺寸方案也没有移动搜索区域。
+图像中心落地点不等于斜视足迹外包框中心，更不等于飞机地面投影。不要把这些中心与无人机GT直接相减后当作定位误差。
+若使用了更早的完整足迹方案，它会在retrieval_all内用_slant_fp覆盖候选中心；本段VIEW_CENTER不是那个覆盖后的中心，需改为在最终中心确定后打印。
+
+已验证：本地用原view_center函数测试下视、斜视、旋转逆变换、窗口内外判定，插入实际源码副本后语法通过。未修改比赛机器缓存。

@@ -1,0 +1,7 @@
+        data.update(
+            focal_y=float(K[1, 1]),
+            roll_deg=float(t["inns_roll"]) if bool(request["isEO"]) else 0.0,
+            reference_window_scale=float(self.camera.get("reference_window_scale", 1.2)),
+            is_slant=bool(request.get("isSlant", False)),
+            pose_known=(self.pose == "yp"),
+            map_hw=tuple(self.ref.image.shape[:2]))

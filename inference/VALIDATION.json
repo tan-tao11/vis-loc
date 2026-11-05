@@ -1,0 +1,35 @@
+{
+  "date": "2026-11-05",
+  "source_status": "reconstructed_from_deployed_bundle_and_user_confirmed_conversation_edits",
+  "actual_competition_cache_compared": false,
+  "target_gpu_validated": false,
+  "real_data_accuracy_validated": false,
+  "environment": {
+    "host": "macOS Apple Silicon",
+    "test_python": "3.9.6 isolated venv",
+    "syntax_parser": "Python 3.12, feature_version=(3,10)"
+  },
+  "python_tests": {
+    "test_geodata": 8,
+    "test_tuning": 5,
+    "test_adapter_python_only": 6,
+    "test_manual_scheme": 9,
+    "total_passed": 28
+  },
+  "syntax_checked_python_files": 794,
+  "syntax_failures": 0,
+  "not_run": [
+    "two native adapter/probe tests",
+    "ARM64 build and fresh embedded runtime creation",
+    "DINO/RoMa GPU forward",
+    "real frame localization",
+    "training/inference tensor parity"
+  ],
+  "behavior_kept": [
+    "aircraft-prior map centre",
+    "initialization isEO in C++ metadata",
+    "no MLP/LoRA integration"
+  ],
+  "origin_bundle_so_sha256": "9dd35e2bdffe670e4795e8e35ef07e7bae31506778bfa265108a660cef5bbb8d",
+  "origin_runtime_payload_sha256": "f62dbae2a82072c4f1ae7d85b2d8f011fc8ca3ae0ba5d25c8db604e4b4534f69"
+}

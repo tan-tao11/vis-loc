@@ -1,0 +1,12 @@
+    side_m = estimate_reference_side(uav_data, drone_size)
+    side_px = max(10, 2 * int(math.ceil(side_m / (2 * ref_resolution))))
+    h_ref, w_ref = ref_image.shape[:2]
+    angle = math.radians(uav_data["yaw"] if opt.pose_priori == "yp" else 0.0)
+    required_px = int(math.ceil(side_px * (abs(math.cos(angle)) + abs(math.sin(angle)))))
+    if (side_px > min(h_ref, w_ref) or
+            required_px > min(uav_data["map_hw"])):
+        raise ValueError(
+            "REF_WINDOW: block %.1fm needs unrotated map at least %.1fm per side; "
+            "increase search_window_m/reference.window_m or lower reference_window_scale"
+            % (side_m, required_px * ref_resolution))
+    block_size = [side_px, side_px]

@@ -2,7 +2,7 @@
 
 红外—卫星视觉定位：训练端与推理端的源码协作仓库。
 
-仓库按训练与推理分为两个独立目录。训练端已包含 MLP、LoRA、单卡 / 双卡 DDP、LoRA 数据增强、几何诊断、可视化和接入适配器；实际服务器上的完整推理源码尚待同步。
+仓库按训练与推理分为两个独立目录。训练端已包含 MLP、LoRA、单卡 / 双卡 DDP、LoRA 数据增强、几何诊断、可视化和接入适配器；推理端已按原部署包和用户确认的手动修改同步重建源码，尚未与比赛机器实时缓存逐字节比对。
 
 两端 AI 请先阅读 [AGENTS.md](AGENTS.md) 和 [训练推理对齐清单](training/docs/训练推理对齐.md)。
 
@@ -11,7 +11,7 @@
 | 目录 | 内容与入口 |
 |---|---|
 | [training/](training/README.md) | 完整训练工程：源码、配置、测试、脚本、文档、参考附件与推理适配器 |
-| [inference/](inference/README.md) | 实际推理工程：预留当前部署源码的接收位置，现阶段只有接入说明 |
+| [inference/](inference/README.md) | 推理工程：两套算法源码、官方接口适配、简化窗口及中心日志、配置与来源记录 |
 
 根目录只保留仓库说明、AI 协作约定和 Git 配置文件。`training/reference/scc_snapshot/` 是历史参考快照，不能代表当前生产推理实现。
 
@@ -36,7 +36,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/train.ps1 -EnvDir D:
 
 ## 推理接入与对齐
 
-推理端将实际源码及去除机器私有信息的配置示例同步到 `inference/`，保持其内部结构，并注明启动入口和工作目录。接收清单见 [推理端说明](inference/README.md)。
+推理端已将原部署包与对话确认的手工修改合并到 `inference/`，保留内部结构，并记录启动入口、源码身份及尚未回收比赛缓存的限制。接收清单见 [推理端说明](inference/README.md)。
 
 两端按 [对齐清单](training/docs/训练推理对齐.md) 比较同一输入的几何、图块、归一化张量、描述子、排序与坐标回映射。未经核验的配置标记保持未确认。
 

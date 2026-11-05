@@ -55,3 +55,11 @@ def test_intensity_guard_flags_white_tiles(tmp_path, dtype, value_range, bad):
         with pytest.raises(ValueError, match='saturates'): satellite_intensity_check(ref)
     else:
         assert satellite_intensity_check(ref)['mapped_white_fraction'] < .1
+
+
+def test_mlp_config_is_vertical_only_and_nadir_aligned():
+    from scc_inference import optical_pose, camera_for
+    c = config(ROOT/'configs/mlp.yaml')
+    assert set(c['data']['groups']) == {'DV', 'NV'} and all(g['isSlant'] == 0 for g in c['data']['groups'].values())
+    t = dict(inns_yaw=306.5, inns_pitch=0., inns_roll=0., sensor_yaw=0.2, sensor_pitch=-0.7, sensor_roll=0.8)
+    assert optical_pose(t, False, camera_for(c, 'NV')) == (306.5, -90.0)

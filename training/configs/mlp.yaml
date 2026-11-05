@@ -7,6 +7,9 @@ data:
   root: 'D:/SCC_data'
   per_image_txt: true
   mapping_confirmed: false      # 核对 mapping_report 后置 true
+  groups:                       # 只用垂直视角（整体替换 train.yaml 的四组）
+    DV: {directory: day/IR/vertical, records: day_IR_vertical.txt, dayOrNight: 0, isSlant: 0, expected_isEO: 0}
+    NV: {directory: night/IR/vertical, records: night_IR_vertical.txt, dayOrNight: 1, isSlant: 0, expected_isEO: 0}
 
 geo:                            # 卫星/DSM：推理同源取图 + 真值足迹标签
   satellite: 'D:/SCC_data/maps/satellite.tif'
@@ -31,11 +34,12 @@ inference:
     image_value_range: null     # 非 uint8 卫星必填，例如 [0, 4095]；填错会使候选图全白
   camera:
     reference_window_scale: 1.2
-    nadir_reference_alignment: false
+    # 垂直视角(非EO)必须为 true：yaw=innsYaw；要求 sensor 角与 INS pitch/roll 均在 1° 内，否则该帧失败
+    nadir_reference_alignment: true
   camera_by_group: {}           # 部署对垂直组(DV/NV)另有设置时在此按组覆盖
 
 candidates:
-  train_window_m: 1200          # 训练集搜索窗边长（越大负例越多，也越慢）
+  train_window_m: 2000          # 训练集搜索窗边长（AGL 1000 m 时约 81 块；越大负例越多，也越慢）
   eval_window_m: 2000           # 验证/测试搜索窗 = 推理 prior_tracking.max_window_m
   center_offset_m: 300          # 搜索中心 = 真值 + ≤300 m 随机偏移
   altitude_error_m: 100         # 高度 = 真值 ±100 m，块尺寸随之偏差

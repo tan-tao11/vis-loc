@@ -16,7 +16,7 @@ def path(value):
     return p if p.is_absolute() else ROOT / p
 
 # Mappings replaced wholesale when overridden (their keys are data names, not settings).
-REPLACE_KEYS = ('sequence_splits', 'sequence_by_file')
+REPLACE_KEYS = ('sequence_splits', 'sequence_by_file', 'groups')
 
 def merge_config(base, override):
     out = dict(base)

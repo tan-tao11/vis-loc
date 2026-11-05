@@ -43,7 +43,9 @@ infrared:
                    min_window_m: 600, max_window_m: 2000, min_fix_inliers: 40}
   camera:
     reference_window_scale: 1.2
-    nadir_reference_alignment: false  # EO斜视保持false；近下视须先确认轴约定。
+    # 垂直视角(非EO, isEO=0)必须为 true，否则 yp 下每帧报错；yaw=innsYaw，要求 sensor 角与 INS pitch/roll 均在 1° 内。
+    # EO 斜视时须为 false。
+    nadir_reference_alignment: true
     # 非EO且关闭近下视分支时，需要真实 optical_axis_in_inns。
     # optical_axis_in_inns: [0, 0, 1]
   self_eval: {enabled: false, min_inliers: 30, max_reprojection_px: 4}

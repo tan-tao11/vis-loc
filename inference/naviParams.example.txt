@@ -28,6 +28,8 @@ rgb:
 infrared:
   project_root: ./projects/SCC-Loc
   pose_priori: yp
+  # 训练导出的 MLP 检索头（training/export.py）；不填则用原 GeM-1024 检索。只替换检索全局特征，不影响匹配。
+  # retrieval_head: ./weights/scc_retrieval_head.pth
   reference:
     georeference: auto
     image: ./maps/scene/satellite.tif

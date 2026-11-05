@@ -85,6 +85,8 @@ def extract_features(retrieval_size, config, method_dict, MID, block_size, SATEL
             
             if 'DINOv2' in method_dict['retrieval_method']:
                 uav_global_feat, _, uav_cls_token = model(UAV1, return_dense=True)
+                if method_dict.get('retrieval_head') is not None:   # trained MLP head: replaces global descriptor only
+                    uav_global_feat = method_dict['retrieval_head'](uav_global_feat, 'ir')
                 if config['RETRIEVAL_FEATURE_NORM']:
                     uav_global_feat = F.normalize(uav_global_feat, dim=-1)
                     uav_cls_token = F.normalize(uav_cls_token, dim=-1)
@@ -142,6 +144,8 @@ def extract_features(retrieval_size, config, method_dict, MID, block_size, SATEL
                         all_shifts.extend(batch_shifts)
                         
                         batch_features = sat_global
+                        if method_dict.get('retrieval_head') is not None:
+                            batch_features = method_dict['retrieval_head'](sat_global, 'satellite')
                         
                     else:
                         batch_features = model(batch_images)

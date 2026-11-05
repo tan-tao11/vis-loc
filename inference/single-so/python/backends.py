@@ -56,6 +56,10 @@ def load_config(path):
             ref[field] = str(absolute_path(ref[field], path.parent))
             if not Path(ref[field]).is_file():
                 raise ValueError(f"{key}: missing {field}: {ref[field]}")
+        if section.get('retrieval_head'):
+            section['retrieval_head'] = str(absolute_path(section['retrieval_head'], path.parent))
+            if not Path(section['retrieval_head']).is_file():
+                raise ValueError(f"{key}: missing retrieval_head: {section['retrieval_head']}")
         for field in ('image_tfw','dsm_tfw','image_prj','dsm_prj','crs_file'):
             if ref.get(field):ref[field]=str(absolute_path(ref[field],path.parent))
         if ref.get("height_datum") != "normal_m" and not (
@@ -437,7 +441,32 @@ class BaseBackend:
             camera["agl_m"] = frame_agl[str(request["number"])]
         agl = self.ref.agl(t, camera)
         yaw, elevation = (0., -90.) if self.pose == "unknown" else optical_pose(t, bool(request["isEO"]), self.camera)
+        need = self.window_for_block(request, K, agl, yaw, elevation, w, h)
+        if need is not None and self.full_ref.window_m > 0 and need > self.full_ref.window_m:
+            # A small (tracking) window cannot hold one rotated block -> REF_WINDOW failure. Enlarge once.
+            self.full_ref.window_m = need
+            self.ref = self.full_ref.for_frame(t)
+            agl = self.ref.agl(t, camera)
+            if isinstance(self.trace.get('prior'), dict): self.trace['prior']['window_m'] = need
+            print('[PRIOR_TRACK] window enlarged to %.0fm for the block size' % need, flush=True)
         return t, image, K, agl, yaw, elevation
+
+    def window_for_block(self, request, K, agl, yaw, elevation, w, h):
+        """Smallest search window that fits the rotated SCC block and >=2 block widths (None if unknown)."""
+        api = getattr(self, 'api', None)
+        if api is None or not hasattr(api, 'estimate_reference_side'): return None
+        data = dict(rel_height=agl, yaw=yaw, pitch=elevation, focal_len=float(K[0, 0]), focal_y=float(K[1, 1]),
+                    roll_deg=float(request['telemetry'][11]) if bool(request["isEO"]) else 0.0,
+                    reference_window_scale=float(self.camera.get("reference_window_scale", 1.2)),
+                    is_slant=bool(request.get("isSlant", False)), pose_known=(self.pose == "yp"))
+        try:
+            import contextlib, io
+            with contextlib.redirect_stdout(io.StringIO()):
+                side = api.estimate_reference_side(data, [min(w, h), min(w, h)])
+        except Exception:
+            return None
+        a = math.radians(yaw if self.pose == "yp" else 0.0)
+        return float(max(1.1*side*(abs(math.cos(a)) + abs(math.sin(a))), 2.0*side))
 
     def confidence(self, inliers, reprojection=None):
         # Default is deliberately uncalibrated/0; success of PnP alone is not an accuracy guarantee.
@@ -576,6 +605,11 @@ class SCCBackend(BaseBackend):
         if isinstance(backbone, (tuple, list)):
             backbone = backbone[0]
         self.methods = api.retrieval_init(self.methods, self.settings, DINOv2_shared=backbone)
+        head = self.section.get('retrieval_head')
+        if head:   # optional trained MLP retrieval head; without it retrieval is the original GeM-1024
+            from retrieval_head import HeadApplier
+            self.methods['retrieval_head'] = HeadApplier(head, self.device)
+            print('[RETRIEVAL_HEAD] loaded %s (%d-d)' % (head, self.methods['retrieval_head'].output_dim), flush=True)
         self.torch.cuda.synchronize()
 
     def localize(self, request, image):

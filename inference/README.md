@@ -47,6 +47,10 @@
 
 详见 [训练推理对齐](../training/docs/训练推理对齐.md) 末节。改动后需按下文 `repack_runtime.py` 重新打包。
 
+## MLP 检索头（2026-11-06）
+
+`infrared.retrieval_head` 指向训练导出的 `scc_retrieval_head.pth` 时，`feature_extract.extract_features` 对查询/卫星的 GeM 描述子分别应用 `ir`/`satellite` 头（`single-so/python/retrieval_head.py`），日志 `[RETRIEVAL_HEAD] loaded ...`。不填则为原 GeM-1024 检索。
+
 ## 使用与构建
 
 本目录不是可在Windows直接运行的推理环境。实际入口仍为Orin／Linux官方框架加载 `.so`。运行时映射为：`single-so/python/` → `<runtime>/adapter/`，`projects/` → `<runtime>/projects/`；ARM64 Python、env、extra、native依赖另行准备。

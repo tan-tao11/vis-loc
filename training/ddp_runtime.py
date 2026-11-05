@@ -125,14 +125,10 @@ def merge_evaluation(manifest, parts, split):
     positions={key:i for i,key in enumerate(groups)}
     rows.sort(key=lambda r:positions[r['id']])
     buckets=defaultdict(list)
-    scales=sorted({c['scale_m'] for g in groups.values() for c in g['candidates']})
     for row in rows:
         g=groups[row['id']]
         for key in ('group','sequence','protocol'): buckets[key+':'+g[key]].append(row)
-        for scale in scales:
-            indexes=[i for i,c in enumerate(g['candidates']) if c['scale_m']==scale]
-            buckets[f'scale_m:{scale}'].append(rank_metrics(
-                np.asarray(row['scores'])[indexes],np.asarray([c['label'] for c in g['candidates']])[indexes]))
+        if g['candidates']: buckets['block_m:%d'%(100*int(g['candidates'][0]['scale_m']//100))].append(row)
     result={'overall':summarize(rows),'rows':rows,'groups':{k:summarize(v) for k,v in buckets.items()},
         'online_feature_seconds':max(p['seconds'] for p in parts),
         'timing_scope':'maximum worker image I/O + DINO + ranking seconds; excludes loading and result gathering'}

@@ -283,6 +283,10 @@ def frame_retrieval(full_ref, t, width, height, is_eo, is_slant, camera, pose_pr
     side = min(width, height)
     with contextlib.redirect_stdout(io.StringIO()):  # silence per-frame [REF_WINDOW] prints
         side_m = estimate_reference_side(data, [side, side])
+    a = math.radians(yaw if pose_priori == 'yp' else 0.0)
+    need = max(1.1*side_m*(abs(math.cos(a)) + abs(math.sin(a))), 2.0*side_m)   # = BaseBackend.window_for_block
+    if full_ref.window_m > 0 and need > full_ref.window_m:
+        return frame_retrieval(full_ref, t, width, height, is_eo, is_slant, camera, pose_priori, cover, window_m=need)
     side_px = max(10, 2 * int(math.ceil(side_m / (2 * view.res))))
     angle = math.radians(yaw if pose_priori == 'yp' else 0.0)
     required_px = int(math.ceil(side_px * (abs(math.cos(angle)) + abs(math.sin(angle)))))
@@ -290,7 +294,7 @@ def frame_retrieval(full_ref, t, width, height, is_eo, is_slant, camera, pose_pr
         raise ValueError('REF_WINDOW: block %.1fm larger than search map; increase window_m' % side_m)
     step = max(1, int(side_px * (100 - cover) / 100))
     mids = compute_block_mid_wo_black(ref_image, [side_px, side_px], [step, step])
-    return dict(view=view, ref_image=ref_image, rotation=rotation, side_px=side_px, side_m=float(side_m),
+    return dict(view=view, ref_image=ref_image, rotation=rotation, side_px=side_px, side_m=float(side_m), window_m=float(full_ref.window_m),
                 mids=np.asarray(mids, dtype=float).reshape(-1, 2), K=K, agl=float(agl), yaw=float(yaw),
                 elevation=float(elevation))
 

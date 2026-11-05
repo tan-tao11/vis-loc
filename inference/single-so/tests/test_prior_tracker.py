@@ -113,5 +113,30 @@ class BackendIntegrationTests(unittest.TestCase):
         backend.tracker = None
         with self.assertRaisesRegex(RuntimeError, 'no valid PnP'): backend.localize_tracked(request, gray)
 
+class WindowForBlockTests(unittest.TestCase):
+    def test_tracking_window_enlarged_for_large_block(self):
+        from backends import BaseBackend
+        from pyproj import Transformer
+        backend = BaseBackend.__new__(BaseBackend)
+        backend.mode = 0; backend.camera = {'agl_m': 2000}; backend.pose = 'yp'
+        backend.tuning = {'profile_timing': False}; backend.config = {}
+        windows = []
+        class Ref:
+            window_m = 900.
+            forward = Transformer.from_crs('EPSG:4326', 'EPSG:32645', always_xy=True)
+            inverse = Transformer.from_crs('EPSG:32645', 'EPSG:4326', always_xy=True)
+            def agl(self, t, c): return c['agl_m']
+            def for_frame(self, t): windows.append(self.window_m); return self
+        backend.ref = backend.full_ref = Ref(); backend.tracker = None
+        backend.api = type('A', (), {'estimate_reference_side': staticmethod(lambda data, size: 0.369*data['rel_height'])})()
+        backend.camera = {'agl_m': 2000, 'nadir_reference_alignment': True}
+        gray = np.full((16, 16), 55, np.uint8); gray[-1] = 180
+        request = {'imgType': 0, 'isEO': 0, 'isSlant': 0, 'number': 1,
+                   'telemetry': [87., 42., 3000., 0, 0, 0, 0, 0, 0, 45., 0, 0, 21.7, 17.5, 12]}
+        backend.begin_frame(request); backend.prepare(request, gray)
+        side = 0.369*2000; need = max(1.1*side*2*math.cos(math.radians(45)), 2*side)
+        self.assertEqual(windows[0], 900.); self.assertAlmostEqual(windows[-1], need, places=6)
+
+
 if __name__ == '__main__':
     unittest.main()

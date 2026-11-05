@@ -30,7 +30,7 @@ def evaluate_arrays(m, arrays, heads=None, split='val', device='cpu'):
     device = str(device)
     if not any(g['split'] == split for g in m['groups']): raise ValueError('Empty evaluation split: '+split)
     if heads: heads.eval()
-    result = {}; collected = {}
+    result = {}
     for mode in (['gem1024', 'heads'] if heads else ['gem1024']):
         rows = []; buckets = defaultdict(list); start = time.perf_counter()
         for g in m['groups']:
@@ -41,16 +41,11 @@ def evaluate_arrays(m, arrays, heads=None, split='val', device='cpu'):
             labels = [x['label'] for x in g['candidates']]
             row = {'id': g['id'], **rank_metrics(scores, labels)}; rows.append(row)
             for key in ('group', 'sequence', 'protocol'): buckets[key+':'+g[key]].append(row)
-            # For each scale, keep every legal query, including zero candidates at that scale.
-            collected.setdefault('scales', set()).update(x['scale_m'] for x in g['candidates'])
+            # One block size per frame (deployed protocol): bucket frames by 100 m block-size bins.
+            if g['candidates']: buckets['block_m:%d' % (100*int(g['candidates'][0]['scale_m']//100))].append(row)
             row['_scores'] = scores.tolist(); row['_labels'] = labels
         if device.startswith('cuda'): torch.cuda.synchronize()
         seconds = time.perf_counter()-start
-        groups = {g['id']: g for g in m['groups']}
-        for scale in sorted(collected.get('scales', [])):
-            for row in rows:
-                indexes = [i for i, x in enumerate(groups[row['id']]['candidates']) if x['scale_m'] == scale]
-                buckets[f'scale_m:{scale}'].append(rank_metrics(np.array(row['_scores'])[indexes], np.array(row['_labels'])[indexes]))
         for row in rows:
             row['scores'] = row.pop('_scores'); del row['_labels']
         result[mode] = {'overall': summarize(rows), 'groups': {k: summarize(v) for k, v in buckets.items()},

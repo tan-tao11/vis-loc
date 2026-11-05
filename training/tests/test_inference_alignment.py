@@ -84,3 +84,44 @@ def test_search_prior_places_window_around_truth_only():
         assert search_prior(item, split, c, ref)[0] == t                       # deterministic
     rec['droneLongitude'] = 0.                                                   # the (unreliable) prior is not used
     assert search_prior(item, 'val', c, ref)[0]['lon'] == t['lon']
+
+
+@needs_inference
+def test_inference_head_class_is_verbatim_and_loads_export(tmp_path):
+    import importlib.util, torch
+    from models import create_heads
+    src_train = (ROOT/'models.py').read_text(encoding='utf-8'); src_inf = (INFERENCE/'single-so/python/retrieval_head.py').read_text(encoding='utf-8')
+    get = lambda s: next(ast.get_source_segment(s, n) for n in ast.parse(s).body if isinstance(n, ast.ClassDef) and n.name == 'RetrievalHeads')
+    assert get(src_train) == get(src_inf)
+    c = {'model': {'input_dim': 1024, 'hidden_dim': 512, 'output_dim': 512, 'dropout': 0.}}
+    torch.manual_seed(0); heads = create_heads(c).eval()
+    payload = {'format_version': 1, 'structure': heads.structure, 'gem': {'p': 4., 'clamp_min': 1e-6, 'dimension': 1024},
+               'backbone': {'checkpoint_sha256': 'd5383ea8f4877b2472eb973e0fd72d557c7da5d3611bd527ceeb1d7162cbf428'},
+               'synthetic_only': False, 'state_dict': heads.state_dict()}
+    torch.save(payload, tmp_path/'head.pth')
+    spec = importlib.util.spec_from_file_location('inf_head', INFERENCE/'single-so/python/retrieval_head.py')
+    mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+    applier = mod.HeadApplier(tmp_path/'head.pth', 'cpu')
+    x = torch.nn.functional.normalize(torch.randn(5, 1024), dim=-1)
+    for domain in ('ir', 'satellite'):
+        assert torch.allclose(applier(x.half(), domain), heads(x.half().float(), domain), atol=1e-6)
+    payload['synthetic_only'] = True; torch.save(payload, tmp_path/'syn.pth')
+    with pytest.raises(ValueError, match='synthetic'): mod.HeadApplier(tmp_path/'syn.pth', 'cpu')
+
+
+def test_small_window_is_enlarged_to_fit_rotated_block(tmp_path):
+    from synthetic import make_fixture
+    from common import config
+    from records import scan
+    c = config(make_fixture(tmp_path))
+    item = next(p for p in scan(c)['pairs'] if p['group'] == 'NS')          # yaw 70 deg: rotated block needs more map
+    ref = scc_inference.open_reference(c, 150.)
+    try:
+        f = scc_inference.frame_retrieval(ref, scc_inference.telemetry(item['record']), item['width'], item['height'], 1, 1,
+                                          scc_inference.camera_for(c, 'NS'), window_m=150.)
+    finally:
+        ref.close()
+    import math
+    a = math.radians(f['yaw'])
+    assert f['window_m'] >= 1.1*f['side_m']*(abs(math.cos(a))+abs(math.sin(a))) - 1e-6 and f['window_m'] >= 2*f['side_m'] - 1e-6
+    assert len(f['mids']) >= 1

@@ -48,6 +48,16 @@ class PriorTrackerTests(unittest.TestCase):
         self.assertTrue(locked)
         self.assertGreater(np.mean(inside), 0.9)
 
+    def test_track_rejects_far_fix_and_reports_prediction(self):
+        rng = np.random.default_rng(4); tr = PriorTracker()
+        for n in range(30): tr.predict(n, *noisy(rng, np.array([30.*n, 0.])), 1000.)
+        self.assertTrue(tr.update(29, 870., 0., 500))
+        s = tr.predict(30, *noisy(rng, np.array([900., 0.])), 1000.)
+        self.assertFalse(tr.update(30, 900.+400., 0., 500))             # 400 m off the prediction: wrong match
+        x, y, source = tr.output(1300., 0., False)
+        self.assertEqual(source, 'predicted'); self.assertLess(math.hypot(x-900., y), 150.)
+        self.assertEqual(tr.output(None, None, False)[2], 'predicted')
+
     def test_new_sequence_resets(self):
         tr = PriorTracker()
         for n in range(10): tr.predict(100+n, 1e4, 0., 1000.)
@@ -76,10 +86,21 @@ class BackendIntegrationTests(unittest.TestCase):
         self.assertEqual(seen['window'], 1500.)                          # first frame: budget cap
         self.assertAlmostEqual(seen['t']['lon'], 87., places=6)
         self.assertEqual(backend.trace['prior']['mode'], 'smooth')
-        backend.last_fix = (87., 42., 500)
-        backend.end_frame(True)
-        self.assertTrue(backend.trace['prior_fix_accepted'])
-
+        # localize_tracked: first frame (acquisition) reports the raw result and may accept it.
+        backend.localize = lambda request, image: (backend.prepare(request, image), setattr(backend, 'last_fix', (87., 42., 500)))[0] and (87., 42., 1234., 1)
+        backend.tracker = PriorTracker({'max_window_m': 1500.}); backend.begin_frame(request)
+        out = backend.localize_tracked(request, gray)
+        self.assertEqual(out, (87., 42., 1234., 1)); self.assertTrue(backend.trace['prior_fix_accepted'])
+        # Next frame: localization fails while tracking -> predicted position, confidence 0, no exception.
+        def fail(request, image):
+            backend.prepare(request, image); raise RuntimeError('SCC-Loc: no valid PnP solution')
+        backend.localize = fail; request = dict(request, number=6); backend.begin_frame(request)
+        out = backend.localize_tracked(request, gray)
+        self.assertEqual(backend.trace['output_source'], 'predicted'); self.assertEqual(out[3], 0)
+        self.assertAlmostEqual(out[0], 87., places=3); self.assertEqual(out[2], 1234.)
+        # Without a tracker, failures propagate exactly as before.
+        backend.tracker = None
+        with self.assertRaisesRegex(RuntimeError, 'no valid PnP'): backend.localize_tracked(request, gray)
 
 if __name__ == '__main__':
     unittest.main()

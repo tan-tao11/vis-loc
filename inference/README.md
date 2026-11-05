@@ -39,7 +39,7 @@
 
 ## 大先验误差：先验平滑与跟踪（2026-11-05）
 
-比赛先验每帧独立误差可达 2–3 海里、高度 ±200 m。`infrared.prior_tracking.enabled: true` 时，`python/prior_tracker.py` 对序列先验做稳健直线拟合（捕获），定位成功后按"上次定位+速度"跟踪；每帧搜索窗由它决定，上限 `max_window_m` 按单帧时间预算实测设定（看 `[PRIOR_TRACK]` 与 `[NAV_TIMING]` 日志）。训练端 `training/scc_prior.py` 是同一文件的字节拷贝。详见 [训练推理对齐](../training/docs/训练推理对齐.md) 末节。改动后需按下文 `repack_runtime.py` 重新打包。
+比赛先验每帧独立误差可达 2–3 海里、高度 ±200 m。`infrared.prior_tracking.enabled: true` 时，`python/prior_tracker.py` 对序列先验做稳健直线拟合（捕获），定位成功后按"上次定位+速度"跟踪；每帧搜索窗由它决定，上限 `max_window_m` 按单帧时间预算实测设定（看 `[PRIOR_TRACK]` 与 `[NAV_TIMING]` 日志）。训练端 `training/scc_prior.py` 是同一文件的字节拷贝。输出策略（误差 >150 m 记 0 分）：跟踪中定位失败或不可信时输出预测位置（置信度 0），见 `BaseBackend.localize_tracked` 与日志 `[PRIOR_OUT]`。详见 [训练推理对齐](../training/docs/训练推理对齐.md) 末节。改动后需按下文 `repack_runtime.py` 重新打包。
 
 ## 使用与构建
 

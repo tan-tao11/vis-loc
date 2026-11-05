@@ -78,7 +78,7 @@ def main():
             try:
                 backend.begin_frame(request)
                 image = np.frombuffer(pixels, np.uint8).reshape((h, w) if c == 1 else (h, w, c))
-                result = backend.localize(request, image)
+                result = backend.localize_tracked(request, image)
                 if len(result) != 4 or not all(math.isfinite(v) for v in result):
                     raise ValueError("nonfinite output")
                 backend.end_frame(True)

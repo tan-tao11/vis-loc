@@ -13,6 +13,12 @@ byte copy; a test compares them). Coordinates are working-CRS metres, frames are
   against the km-level prior noise (simulated straight / 3.4 deg-per-frame / U-turn / S-curve).
 The search window side is 2*(radius + margin), clipped to [min_window_m, max_window_m];
 max_window_m is the per-frame time budget knob.
+
+Output (score: a frame with error > 150 m scores 0, frames are averaged): an accepted fix is reported;
+while tracking, a missing or inconsistent fix is replaced by the predicted position (last fix +
+velocity), which is usually within tens of metres; during acquisition the raw result (or the smoothed
+prior when there is none) is reported. While tracking, a fix is accepted only within the track radius
+of the prediction (150 m + 20 m per frame since the last fix), so a wrong match cannot drag the track.
 """
 import math
 import numpy as np
@@ -108,6 +114,14 @@ class PriorTracker:
         if s is None or s['number'] != number: return False
         if inliers < self.p['min_fix_inliers']: return False
         if math.hypot(x - s['smooth_x'], y - s['smooth_y']) > s['smooth_radius_m'] + self.p['margin_m']: return False
-        if s['mode'] == 'track' and math.hypot(x - s['x'], y - s['y']) > 2*s['radius_m'] + self.p['margin_m']: return False
+        if s['mode'] == 'track' and math.hypot(x - s['x'], y - s['y']) > s['radius_m']: return False
         self.prev_fix, self.fix = self.fix, (float(number), float(x), float(y))
         return True
+
+    def output(self, x=None, y=None, accepted=False):
+        """Position to report for the frame of the last predict(): (x, y, source)."""
+        s = self.last
+        if accepted: return x, y, 'fix'
+        if s['mode'] == 'track': return s['x'], s['y'], 'predicted'
+        if x is not None: return x, y, 'unconfirmed_fix'
+        return s['smooth_x'], s['smooth_y'], 'smoothed_prior'

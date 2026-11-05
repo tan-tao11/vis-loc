@@ -334,11 +334,6 @@ class BaseBackend:
         self.last_fix=None
 
     def end_frame(self, success, error=None):
-        tracker=getattr(self,'tracker',None)
-        if tracker is not None and success and getattr(self,'last_fix',None) is not None:
-            lon,lat,inliers=self.last_fix
-            x,y=self.full_ref.forward.transform(lon,lat,errcheck=True)
-            self.trace['prior_fix_accepted']=tracker.update(self.trace['number'],x,y,inliers)
         self.trace.update(success=success,error=error,total_s=time.perf_counter()-self.frame_start)
         self.trace['filter_and_glue_s']=max(0.,self.trace['candidate_pipeline_s']-self.trace['dense_match_s']-self.trace['pose_s'])
         if not self.tuning['profile_timing']:return
@@ -358,6 +353,40 @@ class BaseBackend:
                 p.parent.mkdir(parents=True,exist_ok=True)
                 with p.open('a') as f:f.write(text+'\n')
             except OSError as exc:print(f'[NAV_TIMING] cannot write log: {exc}',file=sys.stderr)
+
+    def localize_tracked(self, request, image):
+        """localize() plus prior tracking: accept/reject the fix and choose what to report.
+
+        Without prior_tracking this is exactly localize(). With it, a failed or untrusted frame while
+        tracking reports the predicted position (confidence 0) instead of failing or a wrong match.
+        """
+        tracker=getattr(self,'tracker',None)
+        if tracker is None:
+            return self.localize(request, image)
+        try:
+            result=self.localize(request, image); error=None
+        except Exception as exc:
+            result=None; error=exc
+        number=int(request["number"])
+        if tracker.last is None or tracker.last['number']!=number:
+            if error is not None: raise error           # failed before this frame's prediction
+            return result
+        x=y=None; accepted=False
+        if result is not None and getattr(self,'last_fix',None) is not None:
+            x,y=self.full_ref.forward.transform(result[0],result[1],errcheck=True)
+            accepted=tracker.update(number,x,y,self.last_fix[2])
+        ox,oy,source=tracker.output(x,y,accepted)
+        if accepted: self.last_output_altitude=float(result[2])
+        if source in ('fix','unconfirmed_fix'):
+            out=result
+        else:
+            lon,lat=self.full_ref.inverse.transform(ox,oy,errcheck=True)
+            alt=getattr(self,'last_output_altitude',None)
+            out=(lon,lat,float(tracker.last['altitude'] if alt is None else alt),0)
+        self.trace.update(prior_fix_accepted=accepted,output_source=source,
+                          localize_error=None if error is None else str(error))
+        print('[PRIOR_OUT] frame=%s source=%s accepted=%s mode=%s'%(number,source,accepted,tracker.last['mode']),flush=True)
+        return out
 
     def candidate_finished(self, xy, count, reprojection=None):
         record=dict(self.last_geometry)

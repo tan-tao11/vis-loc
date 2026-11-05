@@ -1,0 +1,29 @@
+--- a/Retrieval_Models/feature_extract.py
++++ b/Retrieval_Models/feature_extract.py
+@@ -71,7 +71,7 @@
+         
+     return results
+ 
+-def extract_features(retrieval_size, config, method_dict, MID, block_size, SATELLITE, UAV, val_transforms, model):
++def extract_features(retrieval_size, config, method_dict, MID, block_size, SATELLITE, UAV, val_transforms, model, retrieval_head=None):
+     """
+         Feature Extraction
+     """
+@@ -85,6 +85,8 @@
+             
+             if 'DINOv2' in method_dict['retrieval_method']:
+                 uav_global_feat, _, uav_cls_token = model(UAV1, return_dense=True)
++                if retrieval_head is not None:
++                    uav_global_feat = retrieval_head.apply(uav_global_feat, domain="ir")
+                 if config['RETRIEVAL_FEATURE_NORM']:
+                     uav_global_feat = F.normalize(uav_global_feat, dim=-1)
+                     uav_cls_token = F.normalize(uav_cls_token, dim=-1)
+@@ -130,6 +132,8 @@
+                     
+                     if 'DINOv2' in method_dict['retrieval_method']:
+                         sat_global, sat_dense, _ = model(batch_images, return_dense=True)
++                        if retrieval_head is not None:
++                            sat_global = retrieval_head.apply(sat_global, domain="satellite")
+                         sat_dense_norm = F.normalize(sat_dense, p=2, dim=-1)
+                         query = uav_cls_token.unsqueeze(-1)
+                         

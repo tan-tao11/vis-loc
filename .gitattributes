@@ -1,0 +1,6 @@
+# Runtime fingerprints hash source bytes. Preserve the existing line endings
+# on both Windows and Linux instead of applying core.autocrlf conversion.
+* -text
+*.png binary
+*.jpg binary
+*.jpeg binary

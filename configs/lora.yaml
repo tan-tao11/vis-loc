@@ -1,0 +1,30 @@
+# LoRA 是备选训练配置；数据/姿态/候选配置一律读取已经准备好的原 manifest。
+# 不修改 configs/train.yaml，不重新生成验证/测试候选，方便和 MLP 公平比较。
+schema_version: 1
+seed: 20261104
+lora:
+  last_n_blocks: 4         # ViT-L/14 共24层，默认注入第20~23层（0起始）
+  rank: 8
+  alpha: 16.0             # delta W = (alpha/rank) * B @ A
+  dropout: 0.05           # 仅LoRA分支；原DINO保持eval，冻结全部原参数
+  targets: [q, v]         # 融合qkv中的Q、V切片；K不更新
+  gradient_checkpointing: true
+train:
+  device: cuda:0
+  epochs: 20
+  lr: 0.0001
+  weight_decay: 0.01
+  temperature: 0.07
+  image_batch_size: 1     # 真正送入DINO的图像微批量，先在16GB单卡测试
+  accumulation_groups: 4 # 每个query组单独反向，累计4组再更新
+  max_positives: 4        # 每步随机取至多4个正例；未选正例不变为负例
+  hard_negatives: 8
+  random_negatives: 4
+  hard_refresh_epochs: 2 # 仅训练集在线挖掘，不读取验证/测试负样本
+  patience: 5
+  min_delta: 0.0
+  amp: true
+  clip_grad_norm: 1.0
+  allow_tf32: false
+evaluation:
+  image_batch_size: 4     # 验证/测试始终完整候选集，不使用训练候选子采样

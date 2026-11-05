@@ -158,7 +158,7 @@ powershell -ExecutionPolicy Bypass -File scripts\evaluate.ps1 -EnvDir D:\SCC_Ret
 
 最新完整包还内置 `scripts/train_lora_ddp.ps1`、`scripts/train_lora_aug.ps1` 和 `scripts/train_lora_aug_ddp.ps1`。它们分别提供双卡训练、单卡增强和双卡增强，详细参数及断点说明见开头链接。
 
-已部署服务器可使用 `lora_update.zip` 增量更新，原数据路径配置保留。训练、断点恢复、公平比较和 SCC 接入详见 [LoRA 备选方案](docs/LoRA备选方案.md)。LoRA 检索使用独立 DINO 实例；原始匹配模型和 SGVA 的 dense/CLS 保持原样，部署增加的显存和计算需实测。
+训练、断点恢复、公平比较和 SCC 接入详见 [LoRA 备选方案](docs/LoRA备选方案.md)。LoRA 检索使用独立 DINO 实例；原始匹配模型和 SGVA 的 dense/CLS 保持原样，部署增加的显存和计算需实测。
 
 ## 5. 联网重建与常见错误
 
@@ -190,13 +190,5 @@ MLP 与 LoRA 的评估命令自动生成离线 HTML、各方案候选图、逐�
 旧评估未保存相似度时，重绘的分数字段留空。几何预检增加 `frames.csv` 和 `controls.csv`，逐帧标记控制点超差，损坏的控制点CSV也生成失败报告。独立几何/候选图诊断和新训练要求空输出目录；重复试验请换新目录。LoRA合法断点恢复仍用 `--resume`；代码更新后应新建训练运行，旧代码的恢复指纹会被拒绝。原清单生成代码、配置、数据和冻结特征缓存格式未修改。
 
 两类推理权重先写临时文件并重载核对张量，再原子替换目标文件；保存中断不会覆盖原有完整权重。`.pth.json` 提供SHA256，权重及侧车文件应一起复制并核对哈希。
-
-以下为旧部署的历史增量更新步骤；最新完整包已内置这些更新，应跳过。旧服务器仍可使用 `debug_output_update.zip`，解压到独立目录后运行：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File D:\debug_update\install_debug_update.ps1 -ProjectDir D:\SCC_Retrieval_A\project
-```
-
-安装器先核对包内与基础代码哈希，备份旧代码到 `artifacts/code_backups/` 后更新，保留全部 `configs/`、环境和服务器DINO权重。基础版本不符会拒绝，应使用完整包安装到新目录，再迁移已确认配置。完整 `offline_rebuild_B.zip` 含两种微调方案及离线环境重建材料，不含DINO权重。
 
 来源核对：[PyTorch 官方历史版本](https://pytorch.org/get-started/previous-versions/)、[DINOv2 官方源码](https://github.com/facebookresearch/dinov2/tree/7764ea0f912e53c92e82eb78a2a1631e92725fc8)、[CUDA11.8 官方发布说明](https://docs.nvidia.com/cuda/archive/11.8.0/cuda-toolkit-release-notes/index.html)、[conda-pack 官方文档](https://conda.github.io/conda-pack/)、[Miniconda 官方安装器与哈希](https://repo.anaconda.com/miniconda/)。

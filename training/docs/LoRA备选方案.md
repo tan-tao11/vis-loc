@@ -19,18 +19,6 @@
 
 原生 PyTorch 实现，无新增依赖，沿用 **Python3.10 / torch2.5.1+cu118** 离线环境；不需要 nvcc、PEFT、Triton、xFormers 或编译扩展。用户提供的目标驱动 527.27 高于 CUDA11.8 的保守配套 Windows 驱动基线 522.06；`nvidia-smi` 的 CUDA12.0 表示驱动能力，不要求将本环境换成 cu120。目标服务器实际训练、显存和吞吐仍需在该机运行自检确认。
 
-## 已部署服务器的增量更新
-
-拷贝交付目录中的 `lora_update.zip`，解压到独立临时目录。更新包含新增代码、专用配置、文档、测试及哈希，不含环境、DINO 权重、训练数据，也不覆盖 `configs/train.yaml`。
-
-```powershell
-Expand-Archive -LiteralPath D:\SCC_bundle\lora_update.zip -DestinationPath D:\SCC_lora_update
-powershell -ExecutionPolicy Bypass -File D:\SCC_lora_update\install_lora_update.ps1 `
-  -ProjectDir D:\SCC_Retrieval_A\project
-```
-
-脚本先核对更新内容与所需原工程代码的 SHA256，再写入新增文件。若原工程核心代码已有修改，会报出差异并停止，需要将 LoRA 新模块与实际版本核对后再集成。用户的数据路径配置保持原样。全新安装使用更新后的完整交付材料；当前完整包也已移除 DINO 权重，安装后按主 README 将 `configs/train.yaml` 的 `model.checkpoint` 和 `model.checkpoint_sha256` 指向服务器已有的 DINO 权重，再运行自检或训练。
-
 ## 训练和比较
 
 首先按主 README 完成真实数据映射、几何标定、部署一致性检查和 `prepare_dataset.py`，生成原有 `artifacts/real/manifest.json`。已有可用 manifest 可直接使用；LoRA 不需要先运行 `extract_features.py`，也不读取 MLP 特征缓存。源数据文件仍须在 manifest 记录的位置。

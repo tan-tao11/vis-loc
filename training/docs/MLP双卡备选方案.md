@@ -2,13 +2,7 @@
 
 MLP 和 LoRA 现在都有独立双卡入口。已有单卡 MLP、单卡 LoRA 和 LoRA 双卡文件全部保留。
 
-## 安装和启动
-
-**最新整合版完整包已内置本功能，新安装直接使用下方训练命令，无需安装增补包。** 以下步骤仅供旧部署升级：将 `mlp_ddp_addon.zip` 解压到单独目录，运行：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File D:\mlp_ddp_addon\install_mlp_ddp_addon.ps1 -ProjectDir D:\SCC_Retrieval_A\project
-```
+## 启动
 
 进入工程目录后，一条命令启动双卡 MLP，并自动导出最佳权重：
 
@@ -20,8 +14,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\train_mlp_ddp.ps1 -E
 
 不需要再填写一份 YAML。模型结构、训练轮数、学习率、困难负例和 batch size 都读取已核验 manifest 中保存的原配置。`train.batch_size` 是两张卡合计的全局批量，默认 8 即通常每卡 4 组；原配置是多少就保留多少，学习率不自动放大。要修改训练参数，应按原数据准备/缓存流程生成新的匹配运行，不能直接改 manifest 绕过指纹校验。
 
-本包可独立安装，不要求先装 LoRA 双卡增补包；共享 DDP 文件内容一致时自动跳过。安装器先检查全部哈希和冲突，然后只添加缺少的文件，同名文件不同则拒绝写入。没有增加 Python 依赖，也不包含 DINO 权重；服务器继续使用现有权重。原完整部署 ZIP 无需重新下载。
-
 ## 与原训练的关系
 
 | 方案 | 启动脚本 | 默认训练输出 |
@@ -29,7 +21,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\train_mlp_ddp.ps1 -E
 | MLP 单卡 | `scripts/train.ps1` | `artifacts/real/training` |
 | MLP 双卡 | `scripts/train_mlp_ddp.ps1` | `artifacts/real/mlp_ddp` |
 | LoRA 单卡 | `scripts/train_lora.ps1` | `artifacts/real/lora` |
-| LoRA 双卡 | `scripts/train_lora_ddp.ps1`（LoRA 双卡增补包） | `artifacts/real/lora_ddp` |
+| LoRA 双卡 | `scripts/train_lora_ddp.ps1` | `artifacts/real/lora_ddp` |
 
 MLP 双卡训练复用冻结 DINO 的特征缓存，每张卡都有红外、卫星两个 MLP 头；查询组分给不同进程，使用标准 `DistributedDataParallel` / Gloo 同步梯度。训练阶段不加载 DINO 模型，但缓存校验仍核对本地 DINO 文件哈希。两张卡不是各自训练一个不同方案。
 

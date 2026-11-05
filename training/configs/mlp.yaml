@@ -39,8 +39,11 @@ inference:
   camera_by_group: {}           # 部署对垂直组(DV/NV)另有设置时在此按组覆盖
 
 candidates:
-  train_window_m: 2000          # 训练集搜索窗边长（AGL 1000 m 时约 81 块；越大负例越多，也越慢）
-  eval_window_m: 2000           # 验证/测试搜索窗 = 推理 prior_tracking.max_window_m
+  window_mode: meters           # = 推理 prior_tracking.window_mode（meters：固定米数；blocks：固定块数）
+  train_window_m: 4000          # meters：训练集搜索窗边长（越大负例越多，也越慢）
+  eval_window_m: 4000           # meters：验证/测试 = 推理 prior_tracking.max_window_m
+  train_max_blocks: 100         # blocks：训练集每帧块数
+  eval_max_blocks: 100          # blocks：验证/测试 = 推理 prior_tracking.max_blocks
   center_offset_m: 300          # 搜索中心 = 真值 + ≤300 m 随机偏移
   altitude_error_m: 100         # 高度 = 真值 ±100 m，块尺寸随之偏差
   train_negatives: 128          # 训练集每查询：全部正例 + 128 个负例（一半最近、一半随机）

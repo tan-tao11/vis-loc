@@ -122,15 +122,19 @@ def search_prior(item, split, c, ref):
     t['lon'], t['lat'] = ref.inverse.transform(gx+d*math.cos(a), gy+d*math.sin(a), errcheck=True)
     e = float(cc.get('altitude_error_m') or 0.)
     t['altitude'] = float(r['droneAltitude_gt']) + rng.uniform(-e, e)
-    key = 'train_window_m' if split == 'train' else 'eval_window_m'
-    return t, float(cc.get(key) or c['inference']['reference']['window_m']), 'gt_offset'
+    prefix = 'train' if split == 'train' else 'eval'
+    window = float(cc.get(prefix+'_window_m') or c['inference']['reference']['window_m'])
+    mode = cc.get('window_mode', 'meters')
+    if mode not in ('meters', 'blocks'): raise ValueError('candidates.window_mode must be meters or blocks')
+    max_blocks = cc.get(prefix+'_max_blocks') if mode == 'blocks' else None
+    return t, window, max_blocks
 
-def frame_candidates(full_ref, item, t, c, footprint, window_m):
+def frame_candidates(full_ref, item, t, c, footprint, window_m, max_blocks=None):
     """Deployed search blocks for one frame, labelled against the working-CRS footprint."""
     inf = c['inference']; spec = c['data']['groups'][item['group']]
     frame = frame_retrieval(full_ref, t, item['width'], item['height'], item['record']['isEO'], spec['isSlant'],
                             camera_for(c, item['group']), inf.get('pose_priori', 'yp'), inf.get('retrieval_overlap_percent', 50),
-                            window_m=window_m)
+                            window_m=window_m, max_blocks=max_blocks, hard_cap_m=float(c['candidates'].get('hard_cap_m') or 8000.))
     polys, cands = [], []
     for k, mid in enumerate(frame['mids']):
         r0, r1, c0, c1 = block_bounds(mid, frame['side_px'])
@@ -189,20 +193,20 @@ def prepare(c, limit=None):
                 footprint, center = project_footprint(record, R, K, box, geo, ground, satellite)
                 if to_working:
                     footprint = to_working(footprint); center = tr.transform(*center)
-                t, window, prior_source = search_prior(item, known or 'val', c, ref)
-                frame, cs, polys = frame_candidates(ref, item, t, c, footprint, window)
+                t, window, max_blocks = search_prior(item, known or 'val', c, ref)
+                frame, cs, polys = frame_candidates(ref, item, t, c, footprint, window, max_blocks)
                 search = shapely.union_all(polys+[footprint])
                 split = (assign_split(search, regions, c['split']['buffer_m']) if split_mode == 'geographic'
                          else assignments[item['sequence']])
                 if split == 'train' and known is None:   # geographic mode: split known only now
-                    t, window, prior_source = search_prior(item, 'train', c, ref)
-                    frame, cs, polys = frame_candidates(ref, item, t, c, footprint, window)
+                    t, window, max_blocks = search_prior(item, 'train', c, ref)
+                    frame, cs, polys = frame_candidates(ref, item, t, c, footprint, window, max_blocks)
                     search = shapely.union_all(polys+[footprint])
                 grid_size = len(cs)
                 if split == 'train' and train_negatives:
                     cs = subsample_train(cs, list(center), int(train_negatives), c['seed'], item['id'])
                 groups.append({**item, 'split': split, 'protocol': 'scc_inference', 'is_slant': c['data']['groups'][item['group']]['isSlant'],
-                               'telemetry': t, 'window_m': window, 'prior_source': prior_source, 'side_px': frame['side_px'], 'side_m': frame['side_m'],
+                               'telemetry': t, 'window_m': frame['window_m'], 'prior_source': 'gt_offset', 'side_px': frame['side_px'], 'side_m': frame['side_m'],
                                'grid_size': grid_size, 'yaw_deg': frame['yaw'], 'elevation_deg': frame['elevation'], 'agl_m': frame['agl'],
                                'rotation': R.tolist(), 'optical_ned': R[:, 2].tolist(), 'K': K.tolist(), 'crop_box': list(box),
                                'query_footprint': mapping(footprint), 'ground_center_map': list(center),

@@ -78,12 +78,14 @@ def test_search_prior_places_window_around_truth_only():
     item = {'id': 'DS/s/1', 'record': rec, 'number': 1}
     gx, gy = ref.forward.transform(87.05, 42.02)
     for split, window in (('train', 1200), ('val', 2000), ('test', 2000)):
-        t, w, src = search_prior(item, split, c, ref)
+        t, w, blocks = search_prior(item, split, c, ref)
         tx, ty = ref.forward.transform(t['lon'], t['lat'])
-        assert w == window and src == 'gt_offset' and np.hypot(tx-gx, ty-gy) <= 300 + 1e-6 and abs(t['altitude']-900.) <= 100
+        assert w == window and blocks is None and np.hypot(tx-gx, ty-gy) <= 300 + 1e-6 and abs(t['altitude']-900.) <= 100
         assert search_prior(item, split, c, ref)[0] == t                       # deterministic
     rec['droneLongitude'] = 0.                                                   # the (unreliable) prior is not used
-    assert search_prior(item, 'val', c, ref)[0]['lon'] == t['lon']
+    assert search_prior(item, 'test', c, ref)[0]['lon'] == t['lon']
+    c['candidates'].update(window_mode='blocks', train_max_blocks=64, eval_max_blocks=100)
+    assert search_prior(item, 'train', c, ref)[2] == 64 and search_prior(item, 'val', c, ref)[2] == 100
 
 
 @needs_inference
@@ -125,3 +127,22 @@ def test_small_window_is_enlarged_to_fit_rotated_block(tmp_path):
     a = math.radians(f['yaw'])
     assert f['window_m'] >= 1.1*f['side_m']*(abs(math.cos(a))+abs(math.sin(a))) - 1e-6 and f['window_m'] >= 2*f['side_m'] - 1e-6
     assert len(f['mids']) >= 1
+
+
+def test_blocks_scheme_window_and_rebuild(tmp_path):
+    import math
+    from synthetic import make_fixture
+    from common import config
+    from records import scan
+    c = config(make_fixture(tmp_path))
+    item = next(p for p in scan(c)['pairs'] if p['group'] == 'DV')
+    ref = scc_inference.open_reference(c, 400.)
+    try:
+        args = (ref, scc_inference.telemetry(item['record']), item['width'], item['height'], 0, 0, scc_inference.camera_for(c, 'DV'))
+        f = scc_inference.frame_retrieval(*args, window_m=400., max_blocks=36)
+        assert abs(f['window_m'] - f['side_m']*(6+1)/2) < 1e-6                       # window from the block budget
+        assert 20 <= len(f['mids']) <= 60                                            # ~36 blocks (rotation adds some)
+        g = scc_inference.frame_retrieval(*args, window_m=f['window_m'])             # rebuild from the stored window
+        assert g['side_px'] == f['side_px'] and np.array_equal(g['mids'], f['mids'])
+    finally:
+        ref.close()

@@ -261,11 +261,13 @@ def camera_for(c, group):
     return camera
 
 
-def frame_retrieval(full_ref, t, width, height, is_eo, is_slant, camera, pose_priori='yp', cover=50, window_m=None):
+def frame_retrieval(full_ref, t, width, height, is_eo, is_slant, camera, pose_priori='yp', cover=50, window_m=None, max_blocks=None, hard_cap_m=8000.):
     """Search map, rotation and candidate block centres exactly as the deployed SCC backend.
 
     t holds the search-centre prior (already passed through prior tracking, as in BaseBackend.prepare);
     window_m is the per-frame search window the tracker chose (inference sets full_ref.window_m likewise).
+    max_blocks (blocks scheme, = prior_tracking window_mode 'blocks'): window = block*(sqrt(max_blocks)+1)/2,
+    capped at hard_cap_m; the returned frame['window_m'] is the window actually used.
     """
     if pose_priori not in ('yp', 'unknown'): raise ValueError('pose_priori must be yp or unknown')
     if window_m is not None: full_ref.window_m = float(window_m)
@@ -285,6 +287,10 @@ def frame_retrieval(full_ref, t, width, height, is_eo, is_slant, camera, pose_pr
         side_m = estimate_reference_side(data, [side, side])
     a = math.radians(yaw if pose_priori == 'yp' else 0.0)
     need = max(1.1*side_m*(abs(math.cos(a)) + abs(math.sin(a))), 2.0*side_m)   # = BaseBackend.window_for_block
+    if max_blocks:
+        target = max(min(side_m*(math.sqrt(float(max_blocks)) + 1)/2, float(hard_cap_m)), need)
+        if abs(target - full_ref.window_m) > 1e-6:
+            return frame_retrieval(full_ref, t, width, height, is_eo, is_slant, camera, pose_priori, cover, window_m=target)
     if full_ref.window_m > 0 and need > full_ref.window_m:
         return frame_retrieval(full_ref, t, width, height, is_eo, is_slant, camera, pose_priori, cover, window_m=need)
     side_px = max(10, 2 * int(math.ceil(side_m / (2 * view.res))))

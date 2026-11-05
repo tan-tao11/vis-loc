@@ -71,8 +71,15 @@ inference:
   camera_by_group: {}             # 可选：按组覆盖 camera，如 DV: {optical_axis_in_inns: [0, 0, 1]}
 candidates:
   # 搜索中心=真值+随机偏移（与先验噪声形式无关）；候选块仍为推理原样网格，不插入真值块。
-  train_window_m: 1200            # 训练集搜索窗边长（越大负例越多、越慢）
-  eval_window_m: 2000             # 验证/测试搜索窗边长 = 推理捕获阶段的扫描窗口 max_window_m
+  # 窗口两种方案，与推理 prior_tracking.window_mode 一致：
+  #   meters：窗口边长固定为 *_window_m（块数随 AGL 变化）
+  #   blocks：窗口 = 块边长×(√*_max_blocks+1)/2（块数基本固定），不超过 hard_cap_m
+  window_mode: meters
+  train_window_m: 1200            # meters：训练集搜索窗边长（越大负例越多、越慢）
+  eval_window_m: 2000             # meters：验证/测试 = 推理 max_window_m
+  train_max_blocks: 100           # blocks：训练集每帧块数
+  eval_max_blocks: 100            # blocks：验证/测试 = 推理 max_blocks
+  hard_cap_m: 8000                # blocks：窗口边长上限 = 推理 hard_cap_m
   center_offset_m: 300            # 中心偏移上限（圆内均匀），对应跟踪残差 / 捕获窗口内任意位置
   altitude_error_m: 100           # 高度=真值±均匀误差，块尺寸随之像推理一样有偏差
   train_negatives: null           # 训练集每查询保留全部正例+N个负例；null=全部

@@ -18,7 +18,7 @@ class PriorTrackerTests(unittest.TestCase):
         for n in range(60):
             pos = np.array([30.*n, 0.]); s = tr.predict(n, *noisy(rng, pos), 1000+rng.uniform(-200, 200))
             errors.append(math.hypot(s['x']-pos[0], s['y']-pos[1]))
-            self.assertEqual(s['mode'], 'smooth'); self.assertTrue(600. <= s['window_m'] <= 2000.)
+            self.assertEqual(s['mode'], 'smooth'); self.assertTrue(600. <= s['window_m'] <= 4000.)
         self.assertLess(np.mean(errors[40:]), 0.45*np.mean(errors[:3]))
         self.assertLess(abs(s['altitude']-1000.), 120.)
 
@@ -69,6 +69,19 @@ class PriorTrackerTests(unittest.TestCase):
             if tr.confirmed: inside.append(ok)
             if ok: tr.update(n, *(pos + rng.normal(0, 10, 2)), 100)
         self.assertGreater(len(inside), 50); self.assertGreater(np.mean(inside), 0.9)
+
+    def test_window_cap_two_schemes(self):
+        meters = PriorTracker({'window_mode': 'meters', 'max_window_m': 4000.})
+        self.assertEqual(meters.window_cap(None), 4000.); self.assertEqual(meters.window_cap(369.), 4000.)   # block ignored
+        blocks = PriorTracker({'window_mode': 'blocks', 'max_blocks': 100, 'hard_cap_m': 8000.})
+        self.assertEqual(blocks.window_cap(None), 8000.)                     # unknown block: hard cap
+        for agl in (500., 1000., 2000.):
+            block = 0.369*agl; cap = blocks.window_cap(block)
+            self.assertAlmostEqual(cap, max(600., min(8000., block*5.5)), places=6)
+            if 600. < cap < 8000.: self.assertAlmostEqual((2*cap/block - 1)**2, 100., places=6)   # ~constant block count
+        s = blocks.predict(0, 0., 0., 1000., block_m=369.)
+        self.assertEqual(s['mode'], 'scan'); self.assertAlmostEqual(s['window_m'], 369.*5.5, places=6)
+        with self.assertRaises(ValueError): PriorTracker({'window_mode': 'bogus'})
 
     def test_new_sequence_resets(self):
         tr = PriorTracker()
@@ -137,6 +150,35 @@ class WindowForBlockTests(unittest.TestCase):
         backend.begin_frame(request); backend.prepare(request, gray)
         side = 0.369*2000; need = max(1.1*side*2*math.cos(math.radians(45)), 2*side)
         self.assertEqual(windows[0], 900.); self.assertAlmostEqual(windows[-1], need, places=6)
+
+
+class ProbeBlockTests(unittest.TestCase):
+    def test_first_frame_window_uses_probed_block(self):
+        from backends import BaseBackend
+        from pyproj import Transformer
+        backend = BaseBackend.__new__(BaseBackend)
+        backend.mode = 0; backend.pose = 'yp'; backend.tuning = {'profile_timing': False}; backend.config = {}
+        backend.camera = {'agl_m': 1000, 'nadir_reference_alignment': True}
+        reads = []
+        class Ref:
+            window_m = 600.
+            forward = Transformer.from_crs('EPSG:4326', 'EPSG:32645', always_xy=True)
+            inverse = Transformer.from_crs('EPSG:32645', 'EPSG:4326', always_xy=True)
+            def agl(self, t, c): return c['agl_m']
+            def for_frame(self, t): reads.append(self.window_m); return self
+        backend.ref = backend.full_ref = Ref(); backend.tracker = PriorTracker({'window_mode': 'blocks', 'max_blocks': 100})
+        backend.api = type('A', (), {'estimate_reference_side': staticmethod(lambda data, size: 0.369*data['rel_height'])})()
+        gray = np.full((16, 16), 55, np.uint8); gray[-1] = 180
+        request = {'imgType': 0, 'isEO': 0, 'isSlant': 0, 'number': 1,
+                   'telemetry': [87., 42., 3000., 0, 0, 0, 0, 0, 0, 0., 0, 0, 21.7, 17.5, 12]}
+        backend.begin_frame(request); backend.prepare(request, gray)
+        self.assertEqual(reads[0], 200.)                                       # small probe read first
+        self.assertAlmostEqual(reads[1], 0.369*1000*5.5, places=6)            # then the block-budget window, not 6000
+        self.assertAlmostEqual(backend.trace['prior']['window_cap_m'], 0.369*1000*5.5, places=6)
+        # meters mode: no probe read, window = max_window_m on the first (scan) frame
+        reads.clear(); backend.tracker = PriorTracker({'window_mode': 'meters', 'max_window_m': 4000.})
+        backend.begin_frame(request); backend.prepare(request, gray)
+        self.assertEqual(reads[0], 4000.)
 
 
 if __name__ == '__main__':

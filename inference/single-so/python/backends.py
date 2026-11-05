@@ -413,19 +413,29 @@ class BaseBackend:
             raise ValueError("invalid position prior")
         h, w = image.shape[:2]
         self.query_shape=(h,w)
+        K = camera_matrix(self.camera, t, w, h)
+        camera = dict(self.camera)
+        frame_agl = camera.get("frame_agl_m", {})
+        if str(request["number"]) in frame_agl:
+            camera["agl_m"] = frame_agl[str(request["number"])]
+        yaw, elevation = (0., -90.) if self.pose == "unknown" else optical_pose(t, bool(request["isEO"]), self.camera)
         tracker=getattr(self,'tracker',None)
         if tracker is not None:
+            block=None
+            if tracker.p['window_mode']=='blocks':
+                # Block size of THIS frame from a small DSM read at the prior, so the block budget holds from frame 1.
+                block=self.probe_block(request, t, camera, K, yaw, elevation, w, h)
+                if block is None: block=getattr(self,'last_block_m',None)
             x,y=self.full_ref.forward.transform(t["lon"],t["lat"],errcheck=True)
-            state=tracker.predict(int(request["number"]),x,y,t["altitude"])
+            state=tracker.predict(int(request["number"]),x,y,t["altitude"],block_m=block)
             t["lon"],t["lat"]=self.full_ref.inverse.transform(state["x"],state["y"],errcheck=True)
             t["altitude"]=state["altitude"]
             self.full_ref.window_m=state["window_m"]
-            self.trace['prior']={k:state[k] for k in ('mode','radius_m','window_m','frames')}
-            print('[PRIOR_TRACK] frame=%s mode=%s frames=%d radius=%.0fm window=%.0fm shift=%.0fm alt=%.1f'%(
-                request["number"],state["mode"],state["frames"],state["radius_m"],state["window_m"],
-                math.hypot(state["x"]-x,state["y"]-y),state["altitude"]),flush=True)
+            self.trace['prior']={k:state[k] for k in ('mode','radius_m','window_m','window_cap_m','frames')}
+            print('[PRIOR_TRACK] frame=%s mode=%s frames=%d radius=%.0fm window=%.0fm cap=%.0fm block=%s shift=%.0fm alt=%.1f'%(
+                request["number"],state["mode"],state["frames"],state["radius_m"],state["window_m"],state["window_cap_m"],
+                'unknown' if block is None else '%.0fm'%block,math.hypot(state["x"]-x,state["y"]-y),state["altitude"]),flush=True)
         self.ref = self.full_ref.for_frame(t)
-        K = camera_matrix(self.camera, t, w, h)
         # C++ interface is RGB. Both deployed pipelines take BGR arrays.
         image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR) if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
         if float(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).std()) < 1.0:
@@ -435,12 +445,7 @@ class BaseBackend:
             raise ValueError("invalid distortion coefficients")
         if np.any(dist):
             image = cv2.undistort(image, K, dist)
-        camera = dict(self.camera)
-        frame_agl = camera.get("frame_agl_m", {})
-        if str(request["number"]) in frame_agl:
-            camera["agl_m"] = frame_agl[str(request["number"])]
         agl = self.ref.agl(t, camera)
-        yaw, elevation = (0., -90.) if self.pose == "unknown" else optical_pose(t, bool(request["isEO"]), self.camera)
         need = self.window_for_block(request, K, agl, yaw, elevation, w, h)
         if need is not None and self.full_ref.window_m > 0 and need > self.full_ref.window_m:
             # A small (tracking) window cannot hold one rotated block -> REF_WINDOW failure. Enlarge once.
@@ -451,8 +456,8 @@ class BaseBackend:
             print('[PRIOR_TRACK] window enlarged to %.0fm for the block size' % need, flush=True)
         return t, image, K, agl, yaw, elevation
 
-    def window_for_block(self, request, K, agl, yaw, elevation, w, h):
-        """Smallest search window that fits the rotated SCC block and >=2 block widths (None if unknown)."""
+    def block_side(self, request, K, agl, yaw, elevation, w, h):
+        """SCC block side (m) exactly as utils.retrieval_all estimates it; None if unavailable."""
         api = getattr(self, 'api', None)
         if api is None or not hasattr(api, 'estimate_reference_side'): return None
         data = dict(rel_height=agl, yaw=yaw, pitch=elevation, focal_len=float(K[0, 0]), focal_y=float(K[1, 1]),
@@ -462,9 +467,27 @@ class BaseBackend:
         try:
             import contextlib, io
             with contextlib.redirect_stdout(io.StringIO()):
-                side = api.estimate_reference_side(data, [min(w, h), min(w, h)])
+                return float(api.estimate_reference_side(data, [min(w, h), min(w, h)]))
         except Exception:
             return None
+
+    def probe_block(self, request, t, camera, K, yaw, elevation, w, h):
+        """Block side at the raw prior from a ~200 m DSM read, before the search window is chosen."""
+        if getattr(self, 'api', None) is None or not getattr(self.full_ref, 'window_m', 0) > 0: return None
+        old = self.full_ref.window_m
+        try:
+            self.full_ref.window_m = 200.
+            return self.block_side(request, K, self.full_ref.for_frame(t).agl(t, camera), yaw, elevation, w, h)
+        except Exception:
+            return None
+        finally:
+            self.full_ref.window_m = old
+
+    def window_for_block(self, request, K, agl, yaw, elevation, w, h):
+        """Smallest search window that fits the rotated SCC block and >=2 block widths (None if unknown)."""
+        side = self.block_side(request, K, agl, yaw, elevation, w, h)
+        if side is None: return None
+        self.last_block_m = side   # fallback for the next frame's window cap
         a = math.radians(yaw if self.pose == "yp" else 0.0)
         return float(max(1.1*side*(abs(math.cos(a)) + abs(math.sin(a))), 2.0*side))
 

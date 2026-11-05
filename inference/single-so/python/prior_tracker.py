@@ -1,23 +1,28 @@
-"""Search-centre prior for video sequences with large prior errors (inference/training shared).
+"""Search centre and window per frame for video sequences with large prior errors (inference).
 
-Shared by inference (single-so/python/prior_tracker.py) and training (training/scc_prior.py is a
-byte copy; a test compares them). Coordinates are working-CRS metres, frames are ordered by
-`number`. No ground truth is used anywhere in this module.
+Coordinates are working-CRS metres, frames are ordered by `number`. No ground truth is used.
 
 Primary mechanism: fix-based tracking. Once the previous frames were localized consistently, the
 centre is last fix + velocity (from the last two fixes) and the window is small. This does not
-depend on how the prior error behaves.
+depend on how the prior error behaves. A first acquisition fix is only TENTATIVE; it becomes a
+track after a second consistent fix in the small window around it, so one wrong match cannot start
+a wrong track.
 
 Acquisition (no confirmed track) works for both random and slowly drifting prior errors:
-* scan (default): windows of max_window_m tile the disk of radius prior_error_m around the
-  smoothed prior, one tile per frame. Works for independent errors (the smoothed centre converges)
-  and for slowly drifting errors (the truth stays at a nearly fixed offset from it).
+* scan (default): windows of the per-frame window cap tile the disk of radius prior_error_m around
+  the smoothed prior, one tile per frame (gap-free square grid, nearest first).
 * smooth: search only the smoothed centre; fastest for independent errors, fails for drifting ones.
 * hybrid: alternate scan and smooth frames.
+
+Window cap (time budget), two schemes selected by window_mode:
+* meters (default): cap = max_window_m. The window size is predictable; the number of SCC blocks
+  (~ (2*window/block - 1)^2, block ~ 0.37*AGL for the vertical camera) varies with AGL.
+* blocks: cap = block*(sqrt(max_blocks)+1)/2, so the number of blocks (time per frame) stays roughly
+  constant whatever the AGL; the block size of the current frame is probed from the DSM before the
+  window is chosen. hard_cap_m bounds the map read if the block estimate is unavailable or wrong.
+
 Simulated score with scan (100 m/frame, S-curves, 70% retrieval success; independent / drifting
-errors): 2 km window 0.49 / 0.53, 3 km 0.67 / 0.75, 4 km 0.75 / 0.84. smooth fails on drifting errors.
-A first acquisition fix is only TENTATIVE; it becomes a track after a second consistent fix in the
-small window around it, so one wrong match cannot start a wrong track.
+errors): 2 km window 0.49 / 0.53, 3 km 0.67 / 0.75, 4 km 0.75 / 0.84.
 
 Output (score: error > 150 m scores 0, frames averaged): an accepted fix is reported; while tracking
 (or tentative), a failed/untrusted fix is replaced by the predicted position; during acquisition the
@@ -35,7 +40,10 @@ DEFAULTS = dict(
     confidence=2.5,           # smooth radius = confidence * predicted standard error
     margin_m=300.,            # added to the radius: roughly half a footprint
     min_window_m=600.,
-    max_window_m=2000.,       # time budget: blocks grow with window^2
+    window_mode='meters',     # meters: cap = max_window_m | blocks: cap from max_blocks and the block size
+    max_window_m=4000.,       # meters mode: window cap
+    max_blocks=100,           # blocks mode: approximate SCC blocks per frame
+    hard_cap_m=8000.,         # blocks mode: absolute window cap (also used when the block size is unknown)
     scan_overlap=0.1,         # neighbouring scan tiles overlap by this fraction
     track_radius_m=150.,
     track_growth_m=20.,       # extra radius per frame since the last accepted fix
@@ -81,6 +89,7 @@ class PriorTracker:
     def __init__(self, cfg=None):
         self.p = dict(DEFAULTS, **(cfg or {}))
         if self.p['acquisition'] not in ('scan', 'smooth', 'hybrid'): raise ValueError('acquisition must be scan, smooth or hybrid')
+        if self.p['window_mode'] not in ('meters', 'blocks'): raise ValueError('window_mode must be meters or blocks')
         self.reset()
 
     def reset(self):
@@ -104,9 +113,22 @@ class PriorTracker:
         out['radius_m'] = min(radius, p['prior_error_m']); out['frames'] = N
         return out
 
-    def predict(self, number, x, y, altitude):
-        """Register this frame's prior; return the search centre, altitude, radius and window."""
+    def window_cap(self, block_m=None):
+        """Largest window for this frame (see window_mode)."""
         p = self.p
+        if p['window_mode'] == 'blocks':
+            cap = float(p['hard_cap_m'])
+            if block_m: cap = min(cap, float(block_m)*(math.sqrt(float(p['max_blocks'])) + 1)/2)
+        else:
+            cap = float(p['max_window_m'])
+        return max(cap, float(p['min_window_m']))
+
+    def predict(self, number, x, y, altitude, block_m=None):
+        """Register this frame's prior; return the search centre, altitude, radius and window.
+
+        block_m: SCC block side of this frame (blocks mode); None when unknown.
+        """
+        p = self.p; cap = self.window_cap(block_m)
         if self.priors and (number <= self.priors[-1][0] or number - self.priors[-1][0] > p['reset_gap']):
             self.reset()
         self.priors.append((float(number), float(x), float(y), float(altitude)))
@@ -130,13 +152,14 @@ class PriorTracker:
             if mode == 'smooth':
                 state.update(mode='smooth', x=s['x'], y=s['y'], radius_m=s['radius_m'])
             else:
-                tiles = scan_offsets(p['prior_error_m'], p['max_window_m'], p['scan_overlap'])
+                tiles = scan_offsets(p['prior_error_m'], cap, p['scan_overlap'])
                 dx, dy = tiles[(self.acquire_count//(2 if p['acquisition'] == 'hybrid' else 1)) % len(tiles)]
                 bx, by = s['x'], s['y']
                 state.update(mode='scan', x=bx+dx, y=by+dy, radius_m=p['prior_error_m'])
             self.acquire_count += 1
         side = 2*(state['radius_m'] + p['margin_m'])
-        state['window_m'] = float(min(max(side, p['min_window_m']), p['max_window_m']))
+        state['window_m'] = float(min(max(side, p['min_window_m']), cap))
+        state['window_cap_m'] = cap
         self.last = state
         return state
 

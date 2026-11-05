@@ -66,29 +66,21 @@ def test_query_preprocessing_matches_crop_center(tmp_path, w, h):
     assert np.array_equal(actual, expected[..., 0])
 
 
-@needs_inference
-def test_prior_tracker_is_byte_copy():
-    assert (ROOT/'scc_prior.py').read_bytes() == (INFERENCE/'single-so/python/prior_tracker.py').read_bytes()
-
-
-def test_val_search_prior_never_uses_ground_truth():
+def test_search_prior_places_window_around_truth_only():
     from prepare_dataset import search_prior
     from pyproj import Transformer
     ref = type('R', (), {'forward': Transformer.from_crs('EPSG:4326', 'EPSG:32645', always_xy=True),
                          'inverse': Transformer.from_crs('EPSG:32645', 'EPSG:4326', always_xy=True)})()
-    rec = dict(droneLongitude=87., droneLatitude=42., droneAltitude=1000., droneLongitude_gt=87.05, droneLatitude_gt=42.02,
+    rec = dict(droneLongitude=87.3, droneLatitude=42.3, droneAltitude=1000., droneLongitude_gt=87.05, droneLatitude_gt=42.02,
                droneAltitude_gt=900., sensorYaw=0, sensorPitch=0, sensorRoll=0, innsYaw=0, innsPitch=-80, innsRoll=0, hfov=50, vfov=40)
-    c = {'seed': 1, 'candidates': {'train_center_offset_m': 300, 'train_altitude_error_m': 200, 'train_window_m': 1200},
+    c = {'seed': 1, 'candidates': {'center_offset_m': 300, 'altitude_error_m': 100, 'train_window_m': 1200, 'eval_window_m': 2000},
          'inference': {'reference': {'window_m': 600}}}
     item = {'id': 'DS/s/1', 'record': rec, 'number': 1}
-    from scc_prior import PriorTracker
-    x, y = ref.forward.transform(87., 42.)
-    states = {'DS/s/1': PriorTracker().predict(1, x, y, 1000.)}
-    t1, w1, src = search_prior(item, 'val', c, ref, states)
-    rec.update(droneLongitude_gt=0., droneLatitude_gt=0., droneAltitude_gt=0.)
-    t2, w2, _ = search_prior(item, 'val', c, ref, states)
-    assert src == 'tracked_prior' and t1 == t2 and w1 == w2 and abs(t1['lon']-87.) < 1e-9
-    rec.update(droneLongitude_gt=87.05, droneLatitude_gt=42.02, droneAltitude_gt=900.)
-    t3, w3, src3 = search_prior(item, 'train', c, ref, states)
-    gx, gy = ref.forward.transform(87.05, 42.02); tx, ty = ref.forward.transform(t3['lon'], t3['lat'])
-    assert src3 == 'train_gt_offset' and w3 == 1200 and np.hypot(tx-gx, ty-gy) <= 300 + 1e-6 and abs(t3['altitude']-900.) <= 200
+    gx, gy = ref.forward.transform(87.05, 42.02)
+    for split, window in (('train', 1200), ('val', 2000), ('test', 2000)):
+        t, w, src = search_prior(item, split, c, ref)
+        tx, ty = ref.forward.transform(t['lon'], t['lat'])
+        assert w == window and src == 'gt_offset' and np.hypot(tx-gx, ty-gy) <= 300 + 1e-6 and abs(t['altitude']-900.) <= 100
+        assert search_prior(item, split, c, ref)[0] == t                       # deterministic
+    rec['droneLongitude'] = 0.                                                   # the (unreliable) prior is not used
+    assert search_prior(item, 'val', c, ref)[0]['lon'] == t['lon']

@@ -18,7 +18,6 @@ from records import scan
 from geometry import GeoRaster, Ground, intrinsics, camera_rotation, project_footprint
 from preprocess import query_image
 from scc_inference import telemetry, reference_config, open_reference, camera_for, frame_retrieval, block_bounds, block_map_corners
-from scc_prior import PriorTracker
 
 def label(query, valid_candidate, cfg):
     if query.is_empty or query.area <= 0: raise ValueError('Empty query footprint')
@@ -106,38 +105,25 @@ def split_audit(groups, buffer_m, sequence_exclusive=True):
             errors.append({'reason': 'candidate_geographic_leakage', 'splits': [a, b]})
     return errors
 
-def tracked_priors(pairs, ref, tracking):
-    """Run the deployed PriorTracker (smooth/acquisition mode; no fixes are available offline) causally
-    over every (group, sequence) in frame-number order. Uses priors only, never ground truth."""
-    states, sequences = {}, {}
-    for item in pairs: sequences.setdefault((item['group'], item['sequence']), []).append(item)
-    for items in sequences.values():
-        tracker = PriorTracker(tracking)
-        for item in sorted(items, key=lambda i: i['number']):
-            r = item['record']; x, y = ref.forward.transform(r['droneLongitude'], r['droneLatitude'], errcheck=True)
-            states[item['id']] = tracker.predict(int(item['number']), x, y, float(r['droneAltitude']))
-    return states
+def search_prior(item, split, c, ref):
+    """Search-centre telemetry and window for one frame (all splits).
 
-def search_prior(item, split, c, ref, states):
-    """Search-centre telemetry and window for one frame.
-
-    val/test: exactly what inference uses during acquisition (tracked prior, tracker window) or, with
-    tracking disabled, the raw prior and reference.window_m. train: GT position plus a random offset and
-    altitude error (training only), so every training frame sees deployed-style blocks around the truth.
+    The deployed search centre comes from prior tracking/scanning, whose behaviour depends on the
+    unknown prior error model. The retrieval model only matters once the truth is inside the window
+    (tracking window or the acquisition tile that contains it), so every split uses: centre = GT +
+    uniform offset within center_offset_m, altitude = GT +- altitude_error_m (block-size error),
+    window = train_window_m (train) or eval_window_m (val/test, = acquisition tile, most negatives).
+    GT only places the window; candidates are still the deployed grid and no GT block is inserted.
     """
-    t = telemetry(item['record']); cc = c['candidates']
-    if split == 'train':
-        r = item['record']; rng = np.random.default_rng(int(digest([c['seed'], item['id'], 'train_prior'])[:16], 16))
-        gx, gy = ref.forward.transform(r['droneLongitude_gt'], r['droneLatitude_gt'], errcheck=True)
-        d = float(cc.get('train_center_offset_m') or 0.)*math.sqrt(rng.random()); a = rng.uniform(0, 2*math.pi)
-        t['lon'], t['lat'] = ref.inverse.transform(gx+d*math.cos(a), gy+d*math.sin(a), errcheck=True)
-        e = float(cc.get('train_altitude_error_m') or 0.)
-        t['altitude'] = float(r['droneAltitude_gt']) + rng.uniform(-e, e)
-        return t, float(cc.get('train_window_m') or c['inference']['reference']['window_m']), 'train_gt_offset'
-    state = states.get(item['id'])
-    if state is None: return t, float(c['inference']['reference']['window_m']), 'raw_prior'
-    t['lon'], t['lat'] = ref.inverse.transform(state['x'], state['y'], errcheck=True); t['altitude'] = state['altitude']
-    return t, state['window_m'], 'tracked_prior'
+    t = telemetry(item['record']); cc = c['candidates']; r = item['record']
+    rng = np.random.default_rng(int(digest([c['seed'], item['id'], 'search_prior'])[:16], 16))
+    gx, gy = ref.forward.transform(r['droneLongitude_gt'], r['droneLatitude_gt'], errcheck=True)
+    d = float(cc.get('center_offset_m') or 0.)*math.sqrt(rng.random()); a = rng.uniform(0, 2*math.pi)
+    t['lon'], t['lat'] = ref.inverse.transform(gx+d*math.cos(a), gy+d*math.sin(a), errcheck=True)
+    e = float(cc.get('altitude_error_m') or 0.)
+    t['altitude'] = float(r['droneAltitude_gt']) + rng.uniform(-e, e)
+    key = 'train_window_m' if split == 'train' else 'eval_window_m'
+    return t, float(cc.get(key) or c['inference']['reference']['window_m']), 'gt_offset'
 
 def frame_candidates(full_ref, item, t, c, footprint, window_m):
     """Deployed search blocks for one frame, labelled against the working-CRS footprint."""
@@ -190,8 +176,6 @@ def prepare(c, limit=None):
     if to_working: regions = [(s, to_working(p)) for s, p in regions]
     groups, failures, stride_position = [], [], {}
     pairs = inspection['pairs'][:limit] if limit else inspection['pairs']
-    tracking = c['inference'].get('prior_tracking', {})
-    states = tracked_priors(pairs, ref, tracking) if tracking.get('enabled', False) else {}
     try:
         for item in pairs:
             known = assignments.get(item['sequence']) if split_mode == 'sequence' else None
@@ -205,13 +189,13 @@ def prepare(c, limit=None):
                 footprint, center = project_footprint(record, R, K, box, geo, ground, satellite)
                 if to_working:
                     footprint = to_working(footprint); center = tr.transform(*center)
-                t, window, prior_source = search_prior(item, known or 'val', c, ref, states)
+                t, window, prior_source = search_prior(item, known or 'val', c, ref)
                 frame, cs, polys = frame_candidates(ref, item, t, c, footprint, window)
                 search = shapely.union_all(polys+[footprint])
                 split = (assign_split(search, regions, c['split']['buffer_m']) if split_mode == 'geographic'
                          else assignments[item['sequence']])
                 if split == 'train' and known is None:   # geographic mode: split known only now
-                    t, window, prior_source = search_prior(item, 'train', c, ref, states)
+                    t, window, prior_source = search_prior(item, 'train', c, ref)
                     frame, cs, polys = frame_candidates(ref, item, t, c, footprint, window)
                     search = shapely.union_all(polys+[footprint])
                 grid_size = len(cs)

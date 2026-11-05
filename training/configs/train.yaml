@@ -69,18 +69,17 @@ inference:
     nadir_reference_alignment: false
     # optical_axis_in_inns: [0, 0, 1]
   camera_by_group: {}             # 可选：按组覆盖 camera，如 DV: {optical_axis_in_inns: [0, 0, 1]}
-  # infrared.prior_tracking（scc_prior.py = 推理 prior_tracker.py）：先验每帧独立误差可达 2-3 海里、高度 ±200 m。
-  # 验证/测试按序列因果平滑先验（推理的捕获阶段，离线没有定位结果所以不进入跟踪），搜索窗由跟踪器给出。
-  prior_tracking: {enabled: true, prior_error_m: 5600, altitude_error_m: 200, history: 30,
-                   min_window_m: 600, max_window_m: 2000, min_fix_inliers: 40}
 candidates:
-  train_window_m: null            # 训练集搜索窗边长；null=reference.window_m。验证/测试用推理的窗口
-  train_center_offset_m: 300      # 训练集：搜索中心=真值位置+随机偏移(圆内均匀)，模拟跟踪后的残差
-  train_altitude_error_m: 100     # 训练集：高度=真值±均匀误差（≈平滑后残差），使块尺寸像推理一样有偏差
+  # 搜索中心=真值+随机偏移（与先验噪声形式无关）；候选块仍为推理原样网格，不插入真值块。
+  train_window_m: 1200            # 训练集搜索窗边长（越大负例越多、越慢）
+  eval_window_m: 2000             # 验证/测试搜索窗边长 = 推理捕获阶段的扫描窗口 max_window_m
+  center_offset_m: 300            # 中心偏移上限（圆内均匀），对应跟踪残差 / 捕获窗口内任意位置
+  altitude_error_m: 100           # 高度=真值±均匀误差，块尺寸随之像推理一样有偏差
   train_negatives: null           # 训练集每查询保留全部正例+N个负例；null=全部
   eval_query_stride: 1            # 验证/测试每条序列每k帧取1帧
 labels:
-  positive_coverage: 0.8
+  # 推理网格（块=1.2×足迹，步长50%）最坏错位时最佳块只覆盖约64%足迹，故正样本阈值取0.6
+  positive_coverage: 0.6
   negative_coverage: 0.05
   max_area_ratio: 4.0
   max_center_distance_ratio: 1.0

@@ -62,7 +62,7 @@ powershell -ExecutionPolicy Bypass -File scripts\run_mlp.ps1 -EnvDir D:\SCC_Retr
 powershell -ExecutionPolicy Bypass -File scripts\run_mlp.ps1 -EnvDir D:\SCC_Retrieval\env
 ```
 
-候选块由推理原代码生成（地图网格、搜索窗、旋转、块尺寸、重叠、黑边过滤都与部署相同），`inference` 段照抄部署 naviParams 的 infrared 段即可。训练集可用更大的 `train_window_m` 并只保留全部正例＋`train_negatives` 个负例；验证/测试使用推理窗口，按 `eval_query_stride` 抽帧。`preparation_report.json` 中的 `candidates_per_split`、`covered_queries`、`block_side_m`、`satellite_intensity` 可直接核对。说明见 [训练推理对齐](docs/训练推理对齐.md) 末节。
+候选块由推理原代码生成（地图网格、搜索窗、旋转、块尺寸、重叠、黑边过滤都与部署相同），`inference` 段照抄部署 naviParams 的 infrared 段即可。搜索中心为真值加 ≤`center_offset_m` 随机偏移（训练窗口 `train_window_m`，验证/测试窗口 `eval_window_m` = 推理捕获窗口），训练集只保留全部正例＋`train_negatives` 个负例，验证/测试按 `eval_query_stride` 抽帧。`preparation_report.json` 中的 `candidates_per_split`、`covered_queries`、`block_side_m`、`satellite_intensity` 可直接核对。说明见 [训练推理对齐](docs/训练推理对齐.md) 末节。
 
 ## 1. 离线服务器恢复
 

@@ -17,7 +17,7 @@ def test_alias_and_multiple_records(tmp_path):
 def test_labels_and_leakage():
     c = config(ROOT/'configs/train.yaml'); q = box(0, 0, 10, 10)
     assert label(q, box(-2.5, -2.5, 12.5, 12.5), c['labels'])[0] == 1
-    assert label(q, box(0, 0, 6, 10), c['labels'])[0] == -1
+    assert label(q, box(0, 0, 5, 10), c['labels'])[0] == -1
     assert label(q, box(20, 0, 30, 10), c['labels'])[0] == 0
     assert label(q, box(-100, -100, 100, 100), c['labels'])[0] == -1
     gs = [{'group': 'DS', 'sequence': str(i), 'split': s, 'search_footprint': mapping(q)} for i, s in enumerate(('train', 'val'))]

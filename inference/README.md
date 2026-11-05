@@ -37,9 +37,15 @@
 
 近下视 `nadir_reference_alignment` 是按对话重建的可选近似，示例默认false。EO仅接受 `innsPitch≈-90°`，返回 `innsYaw+innsRoll`；非EO仅接受sensor角及INS pitch／roll接近零，返回 `innsYaw`。1°门限不是标定精度。斜视EO须关闭该分支。它不等于训练侧完整的安装矩阵／三轴射线投影。
 
-## 大先验误差：先验平滑与跟踪（2026-11-05）
+## 大先验误差：定位跟踪与扫描捕获（2026-11-05）
 
-比赛先验每帧独立误差可达 2–3 海里、高度 ±200 m。`infrared.prior_tracking.enabled: true` 时，`python/prior_tracker.py` 对序列先验做稳健直线拟合（捕获），定位成功后按"上次定位+速度"跟踪；每帧搜索窗由它决定，上限 `max_window_m` 按单帧时间预算实测设定（看 `[PRIOR_TRACK]` 与 `[NAV_TIMING]` 日志）。训练端 `training/scc_prior.py` 是同一文件的字节拷贝。输出策略（误差 >150 m 记 0 分）：跟踪中定位失败或不可信时输出预测位置（置信度 0），见 `BaseBackend.localize_tracked` 与日志 `[PRIOR_OUT]`。详见 [训练推理对齐](../training/docs/训练推理对齐.md) 末节。改动后需按下文 `repack_runtime.py` 重新打包。
+比赛先验误差可达 2–3 海里、高度 ±200 m，误差可能逐帧随机，也可能连续漂移；单帧预算 10 秒。`infrared.prior_tracking.enabled: true` 时由 `python/prior_tracker.py` 决定每帧的搜索中心和窗口：
+- **跟踪（主方案）**：定位结果经下一帧确认后，中心 = 上次定位 + 速度（最近两次定位之差，能跟随转弯），小窗口；不依赖先验误差的形式。
+- **捕获**：在平滑先验周围逐帧扫描 `max_window_m` 窗口覆盖 `prior_error_m` 范围。`acquisition: smooth` 只看平滑中心（误差逐帧独立时更快，连续漂移时会失效），`hybrid` 二者交替。
+- **输出**（误差 >150 m 记 0 分）：跟踪中定位失败或不可信时输出预测位置（置信度 0），见 `BaseBackend.localize_tracked` 和日志 `[PRIOR_OUT]`。
+- `max_window_m` 按 10 秒/帧尽量取大，看 `[PRIOR_TRACK]` 与 `[NAV_TIMING]`。`enabled: false` 恢复原固定窗口行为。
+
+详见 [训练推理对齐](../training/docs/训练推理对齐.md) 末节。改动后需按下文 `repack_runtime.py` 重新打包。
 
 ## 使用与构建
 

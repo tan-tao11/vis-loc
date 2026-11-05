@@ -30,8 +30,7 @@ def make_fixture(directory):
     c['inference']['reference'].update(working_crs='EPSG:32645', resolution_m=2.0, window_m=400, nodata=-9999)
     c['inference']['camera_by_group'] = {g: {'nadir_reference_alignment': True} for g in ('DV', 'NV')}
     # Synthetic map is ~1 km per split region: scale the tracker window and training offsets down.
-    c['inference']['prior_tracking'].update(min_window_m=300, max_window_m=400)
-    c['candidates'].update(train_window_m=400, train_center_offset_m=20, train_altitude_error_m=5)
+    c['candidates'].update(train_window_m=400, eval_window_m=400, center_offset_m=20, altitude_error_m=5)
     c['split'].update(regions_geojson=str(root/'regions.geojson'), buffer_m=30)
     c['train'].update(epochs=8, patience=4, batch_size=4)
     c['extract'].update(batch_size=4)

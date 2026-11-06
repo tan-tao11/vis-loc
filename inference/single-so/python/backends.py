@@ -20,6 +20,7 @@ from tuning import read_config, merge, validate_tuning, CVProxy, configure_match
 from prior_tracker import PriorTracker
 from oblique import view_centre, rectify_query
 import consistency
+import self_eval
 
 # Output sources (see localize_tracked) reported as a successful localization; others make stepVNavigator return 0.
 REPORT_ALL = ('fix', 'unconfirmed_fix', 'predicted', 'retrieval', 'search_centre')
@@ -369,6 +370,9 @@ class BaseBackend:
                 with p.open('a') as f:f.write(text+'\n')
             except OSError as exc:print(f'[NAV_TIMING] cannot write log: {exc}',file=sys.stderr)
 
+    def self_eval_cfg(self):
+        return self_eval.settings(getattr(self, 'section', {}).get('self_eval'))
+
     def report_success(self, source):
         """Raise NotReported if this output source is configured as a failed frame (stepVNavigator returns 0)."""
         allowed = getattr(self, 'section', {}).get('report_success', REPORT_ALL)
@@ -385,7 +389,12 @@ class BaseBackend:
         tracker=getattr(self,'tracker',None)
         if tracker is None:
             result=self.localize(request, image)
-            self.report_success('retrieval' if getattr(self,'last_source',None)=='retrieval' else 'fix')
+            source='retrieval' if getattr(self,'last_source',None)=='retrieval' else 'fix'
+            if self.self_eval_cfg()['enabled']:
+                value,failed=self_eval.decide(self.trace.get('self_eval_features'),source,None,self.self_eval_cfg())
+                result=tuple(result[:3])+(value,); self.trace.update(self_eval=value,self_eval_failed=failed)
+            self.trace['output']=list(result)
+            self.report_success(source)
             return result
         try:
             result=self.localize(request, image); error=None
@@ -400,6 +409,8 @@ class BaseBackend:
             x,y=self.full_ref.forward.transform(result[0],result[1],errcheck=True)
             if getattr(self,'last_fix',None) is not None:   # only checked PnP fixes update the tracker
                 accepted=tracker.update(number,x,y,self.last_fix[2])
+        state=dict(tracker.last)
+        residual=math.hypot(x-state['x'],y-state['y']) if (x is not None and state['mode']=='track') else None
         ox,oy,source=tracker.output(x,y,accepted)
         if source=='unconfirmed_fix' and getattr(self,'last_source',None)=='retrieval': source='retrieval'
         if accepted: self.last_output_altitude=float(result[2])
@@ -411,7 +422,15 @@ class BaseBackend:
             out=(lon,lat,float(tracker.last['altitude'] if alt is None else alt),0)
         self.trace.update(prior_fix_accepted=accepted,output_source=source,
                           localize_error=None if error is None else str(error))
+        cfg=self.self_eval_cfg()
+        if cfg['enabled']:   # disabled: keep the backend's own value (0 for SCC, AnyVis confidence)
+            value,failed=self_eval.decide(self.trace.get('self_eval_features'),source,residual,cfg)
+            out=tuple(out[:3])+(value,)
+        else:
+            value,failed=int(out[3]),['disabled']
+        self.trace.update(self_eval=value,self_eval_failed=failed,track_residual_m=residual,output=list(out))
         allowed=getattr(self,'section',{}).get('report_success',REPORT_ALL)
+        print('[SELF_EVAL] frame=%s value=%d failed=%s'%(number,value,','.join(failed) or '-'),flush=True)
         print('[PRIOR_OUT] frame=%s source=%s accepted=%s mode=%s reported=%d'%(number,source,accepted,tracker.last['mode'],source in allowed),flush=True)
         self.report_success(source)
         return out
@@ -760,7 +779,8 @@ class SCCBackend(BaseBackend):
             blh,counts,errors,retrieval,uncertainty,consistent=[],[],[],[],[],[]
             one=lambda v,i:[v[i]] if isinstance(v,(list,tuple,np.ndarray)) else v
             centres=[consistency.block_centre(rotation,rows[k],cols[k],one(heights,k)[0],one(widths,k)[0],self.ref.x0,self.ref.y0,res)
-                     for k in range(len(rows))] if self.check['enabled'] else []
+                     for k in range(len(rows))]
+            checks=[]   # per candidate (ok, reason, block distance m, dz m), also feeds selfEval
             for rank in range(min(len(rows),self.tuning['max_candidates'])):
                 if self.trace['candidates_attempted']>=self.tuning['initial_candidates']:self.trace['fallback_used']=True
                 self.last_geometry={};self.trace['candidates_attempted']+=1
@@ -773,13 +793,15 @@ class SCCBackend(BaseBackend):
                 blh.extend(pp);counts.extend(nn);errors.extend(ee);retrieval.extend(rr);uncertainty.extend(uu)
                 point=pp[0] if pp else {}
                 xy=list(self.ref.forward.transform(point['L'],point['B'])) if point.get('L') is not None and point.get('B') is not None else None
-                ok=True
-                if self.check['enabled'] and xy is not None and point.get('H') is not None and np.isfinite(point['H']):
+                ok,why,dist,dz=True,'no_fix',float('nan'),float('nan')
+                if xy is not None and point.get('H') is not None and np.isfinite(point['H']):
                     ok,why,dist=consistency.check_fix(xy[0],xy[1],point['H'],t['altitude'],centres[rank],one(widths,rank)[0]*res,
                                                       agl,yaw,elevation,self.check)
+                    dz=point['H']-t['altitude']
                     print('[PNP_CHECK] frame=%s rank=%d inliers=%d %s dist=%.0fm dz=%.0fm'%(request["number"],rank+1,nn[0] if nn else 0,
-                          why,dist,point['H']-t['altitude']),flush=True)
-                consistent.extend([ok]*len(pp))
+                          why,dist,dz),flush=True)
+                    ok=ok or not self.check['enabled']
+                consistent.extend([ok]*len(pp)); checks.extend([(ok,why,dist,dz,rank)]*len(pp))
                 if self.candidate_finished(xy,nn[0] if nn else 0,ee[0] if ee else None) and ok:break
         valid = [i for i, p in enumerate(blh) if counts[i] >= self.tuning['min_result_inliers'] and
                  all(p.get(k) is not None and np.isfinite(p[k]) for k in ("L", "B", "H")) and
@@ -800,4 +822,20 @@ class SCCBackend(BaseBackend):
         if self.tuning['reject_weak_results'] and not good_enough(self.trace['candidates'],self.tuning):
             raise RuntimeError('SCC-Loc: geometry quality gate not met')
         self.last_fix = (blh[best]["L"], blh[best]["B"], counts[best])
-        return blh[best]["L"], blh[best]["B"], blh[best]["H"], self.confidence(counts[best], errors[best])
+        self.trace['self_eval_features'] = self.fix_features(blh, counts, errors, valid, best, checks, centres, scores, widths, res, one)
+        value, _ = self_eval.decide(self.trace['self_eval_features'], 'fix', None, self.self_eval_cfg())
+        return blh[best]["L"], blh[best]["B"], blh[best]["H"], value
+
+    def fix_features(self, blh, counts, errors, valid, best, checks, centres, scores, widths, res, one):
+        """Reliability features of the chosen fix (logged in [NAV_TIMING]; thresholds in infrared.self_eval)."""
+        ok, why, dist, dz, rank = checks[best]
+        side = float(one(widths, rank)[0] * res)
+        s = np.ravel(scores).astype(float)
+        far = [s[k] for k in range(len(centres)) if math.hypot(centres[k][0]-centres[rank][0], centres[k][1]-centres[rank][1]) > 1.01*side]
+        xy = lambda i: self.ref.forward.transform(blh[i]['L'], blh[i]['B'])
+        bx, by = xy(best)
+        agreeing = sum(1 for i in valid if math.hypot(xy(i)[0]-bx, xy(i)[1]-by) <= 50.)
+        err = errors[best]
+        return dict(inliers=int(counts[best]), reprojection=None if err is None else float(err), block_dist=float(dist), side_m=side,
+                    dz=float(dz), rank=int(rank)+1, score=float(s[rank]) if rank < len(s) else None,
+                    score_margin=float(s[rank]-max(far)) if far and rank < len(s) else 1.0, agreeing=int(agreeing))

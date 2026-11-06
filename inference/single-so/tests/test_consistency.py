@@ -155,3 +155,32 @@ class ReportSuccessTests(unittest.TestCase):
         self.assertEqual(b.localize_tracked({'number': 4}, None), (87., 42., 1000., 1))
         b.begin_frame({'number': 5}); b.localize = lambda r, i: (setattr(b, 'last_source', 'retrieval'), (87., 42., 1000., 0))[1]
         with self.assertRaises(NotReported): b.localize_tracked({'number': 5}, None)
+
+
+class SelfEvalTests(unittest.TestCase):
+    good = dict(inliers=80, reprojection=1.5, block_dist=40., side_m=370., dz=20., score_margin=.05, agreeing=2)
+
+    def test_decide_all_checks(self):
+        import self_eval
+        cfg = self_eval.settings({'enabled': True})
+        self.assertEqual(self_eval.decide(self.good, 'fix', 30., cfg), (1, []))
+        self.assertEqual(self_eval.decide(self.good, 'predicted', None, cfg)[0], 0)
+        self.assertEqual(self_eval.decide(None, 'fix', None, cfg)[1], ['no_fix'])
+        for key, val, reason in (('inliers', 10, 'inliers'), ('reprojection', 9., 'reprojection'), ('block_dist', 300., 'block'),
+                                 ('dz', -400., 'altitude'), ('score_margin', -.02, 'retrieval'), ('agreeing', 0, 'agreement')):
+            self.assertEqual(self_eval.decide(dict(self.good, **{key: val}), 'fix', None, cfg), (0, [reason]))
+        self.assertEqual(self_eval.decide(self.good, 'fix', 250., cfg), (0, ['track']))
+        self.assertEqual(self_eval.decide(self.good, 'fix', None, self_eval.settings(None)), (0, ['disabled']))
+
+    def test_scc_localize_reports_features_and_self_eval(self):
+        from pyproj import Transformer
+        inv = Transformer.from_crs('EPSG:32645', 'EPSG:4326', always_xy=True); fwd = Transformer.from_crs('EPSG:4326', 'EPSG:32645', always_xy=True)
+        x0, y0 = fwd.transform(87., 42.)
+        good = inv.transform(x0 + 20., y0 - 10.) + (1490., 150)
+        b, _ = SCCLocalizeCheckTests().make([good, good])
+        b.section = {'self_eval': {'enabled': True, 'max_reprojection_px': 4}}
+        lon, lat, H, value = b.localize({'number': 1, 'isEO': 0}, None)
+        f = b.trace['self_eval_features']
+        self.assertEqual(f['inliers'], 150); self.assertEqual(f['rank'], 1); self.assertEqual(f['agreeing'], 1)   # rank-2 block is 1 km away: its identical fix is inconsistent
+        self.assertLess(f['block_dist'], 30.); self.assertAlmostEqual(f['dz'], -10.); self.assertAlmostEqual(f['score_margin'], .11)
+        self.assertEqual(value, 1)

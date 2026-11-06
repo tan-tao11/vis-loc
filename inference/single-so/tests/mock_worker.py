@@ -29,6 +29,7 @@ with socket.socket(fileno=a.fd) as s:
         assert len(image)>0
         if os.getenv('TEST_BEHAVIOR')=='crash': sys.exit(9)
         if os.getenv('TEST_BEHAVIOR')=='timeout': time.sleep(5)
+        if os.getenv('TEST_BEHAVIOR')=='slow': time.sleep(1.5)
         if os.getenv('TEST_BEHAVIOR')=='bad_result': send_reply(s,'OK nan 30 100 1'); continue
         if os.getenv('TEST_BEHAVIOR')=='fail': send_reply(s,'FAIL no PnP'); continue
         send_reply(s,f'OK {110+a.modality} 30 {100+r["number"]} 0')

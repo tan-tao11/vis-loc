@@ -22,9 +22,11 @@ class AdapterTests(unittest.TestCase):
 
     def tearDown(self): self.temp.cleanup()
 
-    def probe(self, behavior='ok'):
+    def probe(self, behavior='ok', step_timeout='150'):
         env=dict(os.environ,NAV_WORKER=str(ROOT/'tests/mock_worker.py'),NAV_PYTHON=sys.executable,
-                 NAV_STEP_TIMEOUT_MS='150',NAV_INIT_TIMEOUT_MS='5000',TEST_BEHAVIOR=behavior)
+                 NAV_INIT_TIMEOUT_MS='5000',TEST_BEHAVIOR=behavior)
+        env.pop('NAV_STEP_TIMEOUT_MS', None)
+        if step_timeout is not None: env['NAV_STEP_TIMEOUT_MS']=step_timeout
         return subprocess.run([str(ROOT/'build/adapter_probe'),str(self.cfg),str(self.raw),'16','16','RITR'],
                               env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,timeout=15)
 
@@ -33,6 +35,12 @@ class AdapterTests(unittest.TestCase):
         rows=[r.split() for r in p.stdout.splitlines() if r.startswith('RESULT')]
         self.assertEqual([r[1] for r in rows],list('RITR'))
         self.assertEqual([float(r[3]) for r in rows],[111,110,110,111])
+        self.assertEqual([float(r[5]) for r in rows],[101,102,103,104])
+
+    def test_no_step_time_limit_by_default(self):
+        p=self.probe('slow', step_timeout=None)          # 1.5 s per frame, no NAV_STEP_TIMEOUT_MS
+        self.assertEqual(p.returncode,0,p.stderr)
+        rows=[r.split() for r in p.stdout.splitlines() if r.startswith('RESULT')]
         self.assertEqual([float(r[5]) for r in rows],[101,102,103,104])
 
     def test_worker_failure_is_bounded(self):

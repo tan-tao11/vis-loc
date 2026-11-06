@@ -29,13 +29,18 @@ namespace {
 using Clock = std::chrono::steady_clock;
 constexpr size_t MAX_IMAGE = 128 * 1024 * 1024;
 
+// 0 = no limit. Steps have no adapter-side limit by default (NAV_STEP_TIMEOUT_MS sets one for debugging).
 int timeout_ms(const char* key, int fallback) {
     const char* v = std::getenv(key);
     if (!v) return fallback;
     char* end = nullptr;
     long n = std::strtol(v, &end, 10);
-    if (!end || *end || n < 1 || n > 3600000) throw std::runtime_error("invalid timeout environment variable");
+    if (!end || *end || n < 0 || n > 3600000) throw std::runtime_error("invalid timeout environment variable");
     return static_cast<int>(n);
+}
+
+Clock::time_point deadline_after(int ms) {
+    return ms == 0 ? Clock::time_point::max() : Clock::now() + std::chrono::milliseconds(ms);
 }
 
 // One worker per project prevents collisions between their same-named Python packages.
@@ -44,9 +49,13 @@ class Worker {
     pid_t pid_ = -1;
     void transfer(void* bytes, size_t n, bool writing, Clock::time_point deadline) {
         char* p = static_cast<char*>(bytes);
+        const bool unlimited = deadline == Clock::time_point::max();
         while (n) {
-            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now()).count();
-            if (ms <= 0) throw std::runtime_error("worker timeout");
+            long long ms = -1;   // poll(-1): wait until the worker answers or its socket closes
+            if (!unlimited) {
+                ms = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now()).count();
+                if (ms <= 0) throw std::runtime_error("worker timeout");
+            }
             pollfd poll_fd{fd_, static_cast<short>(writing ? POLLOUT : POLLIN), 0};
             int ready = poll(&poll_fd, 1, static_cast<int>(ms));
             if (ready < 0 && errno == EINTR) continue;
@@ -130,14 +139,14 @@ public:
         if (error) { close(fds[0]); pid_ = -1; throw std::runtime_error(std::string("spawn failed: ") + strerror(error)); }
         fd_ = fds[0];
         try {
-            auto reply = response(Clock::now() + std::chrono::milliseconds(timeout_ms("NAV_INIT_TIMEOUT_MS", 600000)));
+            auto reply = response(deadline_after(timeout_ms("NAV_INIT_TIMEOUT_MS", 600000)));
             if (reply == "DISABLED") { stop(); return false; }
             if (reply != "READY") throw std::runtime_error(reply);
         } catch (...) { stop(); throw; }
         return true;
     }
     std::string step(const std::string& metadata, const unsigned char* data, size_t size) {
-        auto deadline = Clock::now() + std::chrono::milliseconds(timeout_ms("NAV_STEP_TIMEOUT_MS", 120000));
+        auto deadline = deadline_after(timeout_ms("NAV_STEP_TIMEOUT_MS", 0));
         uint32_t n = htonl(static_cast<uint32_t>(metadata.size()));
         transfer(&n, sizeof(n), true, deadline);
         transfer(const_cast<char*>(metadata.data()), metadata.size(), true, deadline);

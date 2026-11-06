@@ -2,7 +2,7 @@
 # Use -Limit 12 for a small check first; -Steps selects stages, e.g. -Steps prepare  or  -Steps extract,train,eval
 # GPUs: only CUDA devices with >= 6 GB are used (two A4000; a small display GPU such as a P400 is skipped).
 # -DeviceIds '0,1' overrides the automatic choice (torch CUDA numbering, see the 'Using GPUs' line).
-param([Parameter(Mandatory=$true)][string]$EnvDir, [string]$Config='configs/mlp.yaml', [int]$GPUs=2,
+param([Parameter(Mandatory=$true)][string]$EnvDir, [string]$Config='configs/slant.yaml', [int]$GPUs=2,
       [int]$Limit=0, [string[]]$Steps=@('prepare,extract,train,eval'), [string[]]$DeviceIds=@())
 . "$PSScriptRoot\common.ps1"
 Set-EnvironmentPath $EnvDir

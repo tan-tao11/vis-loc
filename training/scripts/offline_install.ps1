@@ -71,5 +71,5 @@ Expand-Archive -LiteralPath (Join-Path $bundle 'source.zip') -DestinationPath $p
 Expand-Archive -LiteralPath (Join-Path $bundle 'model_and_source.zip') -DestinationPath $project -Force
 Invoke-Checked (Join-Path $envDir 'python.exe') @('-m','pip','check')
 Write-Host 'DINO weights are not bundled. Before offline_check or training, set model.checkpoint and model.checkpoint_sha256 in project\configs\train.yaml to the existing server DINO checkpoint. See README.'
-Write-Host 'Included: MLP single/DDP, LoRA single/DDP, LoRA augmentation single/DDP, geometry and visualization tools.'
+Write-Host 'Included: MLP retrieval head for slant (oblique) IR, geometry and visualization tools.'
 Write-Host "Restored to $dest. Run project\scripts\offline_check.ps1 with -EnvDir $envDir -BundleRoot $bundle. Do not move this environment after conda-unpack."

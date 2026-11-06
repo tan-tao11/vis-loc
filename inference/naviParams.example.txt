@@ -26,34 +26,30 @@ rgb:
   camera: {}
   self_eval: {enabled: false, min_inliers: 30}
 infrared:
+  # 倾斜（DS/NS）专用 .so 的红外段；与 training/configs/slant.yaml 的 inference 段逐项一致。
   project_root: ./projects/SCC-Loc
   pose_priori: yp
-  # 训练导出的 MLP 检索头（training/export.py）；不填则用原 GeM-1024 检索。只替换检索全局特征，不影响匹配。
-  # retrieval_head: ./weights/scc_retrieval_head.pth
+  # 训练导出的倾斜 MLP 检索头（training/export.py）；不填则用原 GeM-1024 检索。
+  retrieval_head: ./weights/scc_retrieval_head_slant.pth
   reference:
     georeference: auto
     image: ./maps/scene/satellite.tif
     dsm: ./maps/scene/dsm.tif
     height_datum: normal_m
-    window_m: 600
+    window_m: 600                 # 开启 prior_tracking 时只是占位（必须 > 0）
     image_bands: [1, 1, 1]
-    # DSM仅tif时要求内嵌地理信息。window_m是飞机先验周围总地图边长。
-  # 先验经纬度误差可达2-3海里、高度±200m（prior_tracker.py）：定位成功并经下一帧确认后，以上次定位+速度为中心小窗口跟踪；
-  # 捕获阶段在平滑先验周围逐帧扫描 max_window_m 大小的窗口（对随机和连续漂移的先验误差都有效）。
-  # 窗口上限两种方案（window_mode）：
-  #   meters：固定 max_window_m（窗口可预知，每帧块数随 AGL 变化；模拟 2000/3000/4000 m 得分约 0.5/0.7/0.8）
-  #   blocks：每帧约 max_blocks 个块（窗口 = 块边长×(√max_blocks+1)/2，随 AGL 变化，单帧耗时基本固定），不超过 hard_cap_m
-  # 每帧块数 ≈ (2×窗口/块边长−1)²，垂直视角块边长 ≈ 0.37×AGL。看日志 [PRIOR_TRACK]/[NAV_TIMING] 调到 10 秒以内。
+    # 不要写 resolution_m: 1：倾斜窗口近 10 km，沿用 DSM 网格（与训练一致）
+  # 先验误差为固定或缓慢变化的偏移：offset_model 跟踪 = 当前先验 + 最近一次定位的偏移量。
+  # 窗口以视场中心（飞机前方 AGL/tan(俯角)）为中心，所以 prior_error_m 只填先验误差本身。
   prior_tracking: {enabled: true, acquisition: scan, prior_error_m: 5600, altitude_error_m: 200,
-                   window_mode: meters, max_window_m: 4000, max_blocks: 100, hard_cap_m: 8000,
-                   min_window_m: 600, min_fix_inliers: 40}
+                   window_mode: meters, max_window_m: 10000, max_blocks: 100, hard_cap_m: 12000,
+                   min_window_m: 600, min_fix_inliers: 40, offset_model: true}
   camera:
     reference_window_scale: 1.2
-    # 垂直视角(非EO, isEO=0)必须为 true，否则 yp 下每帧报错；yaw=innsYaw，要求 sensor 角与 INS pitch/roll 均在 1° 内。
-    # EO 斜视时须为 false。
-    nadir_reference_alignment: true
-    # 非EO且关闭近下视分支时，需要真实 optical_axis_in_inns。
-    # optical_axis_in_inns: [0, 0, 1]
+    nadir_reference_alignment: false   # 倾斜必须为 false：光轴 = INS X 轴，俯角 = innsPitch
+    oblique: true                      # 视场中心窗口 + 查询图俯视矫正 + 候选块可见区域遮挡（single-so/python/oblique.py）
+    query_crop_scale: 0.5              # = training preprocess.query_crop_scale；块边长按短边×0.5 的中心区域估算
+  tuning: {min_result_inliers: 15}
   self_eval: {enabled: false, min_inliers: 30, max_reprojection_px: 4}
 # 无profile时使用reference.window_m；有profile时其search_window_m覆盖读取范围。
 # 600m例子不适用于大先验误差/大斜视足迹；须据日志核对覆盖与内存。

@@ -12,7 +12,7 @@ from models import load_backbone, forward_frozen, backbone_identity
 
 def extraction_identity(m, c, identity):
     return digest({'manifest_id': m['manifest_id'], 'config': c, 'backbone': identity,
-                   'pipeline_code': {name: sha256(ROOT/name) for name in ('geometry.py', 'preprocess.py', 'scc_inference.py', 'scc_geodata.py', 'models.py', 'extract_features.py')},
+                   'pipeline_code': {name: sha256(ROOT/name) for name in ('geometry.py', 'preprocess.py', 'scc_inference.py', 'scc_geodata.py', 'scc_oblique.py', 'models.py', 'extract_features.py')},
                    'pipeline_version': 1, 'torch': str(torch.__version__), 'amp': c['extract']['amp']})
 
 def extract(c, manifest, cache_dir, device='cuda:0', shard_index=0, num_shards=1):
@@ -47,7 +47,7 @@ def extract(c, manifest, cache_dir, device='cuda:0', shard_index=0, num_shards=1
             for attempt in range(c['extract']['retries']+1):
                 try:
                     t = time.perf_counter()
-                    u, _ = query_image(g['image'], c['preprocess'])
+                    u = tiles.query(g, pp['size'])
                     q = forward_frozen(backbone, tensor_image(u, c['preprocess']).unsqueeze(0).to(device), c['extract']['amp'])[0].cpu().numpy()
                     feats = []
                     for j in range(0, len(g['candidates']), batch_size):

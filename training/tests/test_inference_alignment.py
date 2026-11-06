@@ -146,3 +146,20 @@ def test_blocks_scheme_window_and_rebuild(tmp_path):
         assert g['side_px'] == f['side_px'] and np.array_equal(g['mids'], f['mids'])
     finally:
         ref.close()
+
+
+@needs_inference
+def test_oblique_is_byte_copy():
+    assert (ROOT/'scc_oblique.py').read_bytes() == (INFERENCE/'single-so/python/oblique.py').read_bytes()
+
+
+@needs_inference
+def test_oblique_staging_matches_inference():
+    """Masked tiles and the staged bird's-eye query are applied the same way in inference."""
+    fe = (INFERENCE/'projects/SCC-Loc/Retrieval_Models/feature_extract.py').read_text(encoding='utf-8')
+    assert "img = np.array(img, copy=True); img[method_dict['tile_mask'] == 0] = 0" in fe
+    ut = (INFERENCE/'projects/SCC-Loc/utils.py').read_text(encoding='utf-8')
+    assert "Image.fromarray(cv2.imread(UAV_path)) if uav_data.get('query_prepared')" in ut
+    be = (INFERENCE/'single-so/python/backends.py').read_text(encoding='utf-8')
+    assert "rectify_query(image[..., 0], K, agl, elevation, side_px * res)" in be
+    assert "vx0, vy0 = view_centre(x0, y0, agl0, yaw, elevation)" in be

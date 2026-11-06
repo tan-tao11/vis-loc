@@ -151,7 +151,7 @@ def inspect_frame(item, c, satellite, ground, controls, position_source):
         'position_source': position_source, 'isEO': r['isEO'], 'errors': [], 'warnings': [], 'controls': [], 'hits': {}}
     R = camera_rotation(r, c['pose']); K = intrinsics(item['width'], item['height'], r, c['preprocess']['intrinsics_override'])
     frame = CameraFrame(r['droneLongitude_gt'], r['droneLatitude_gt'], r['droneAltitude_gt'], geo['normal_to_ellipsoid_m'])
-    box = center_crop_box(item['width'], item['height']); l, t, right, bottom = box
+    box = center_crop_box(item['width'], item['height'], float(c['preprocess'].get('query_crop_scale', 1.0))); l, t, right, bottom = box
     row.update(rotation=R.tolist(), K=K.tolist(), crop_box=list(box), optical_ned=R[:, 2].tolist(),
         image_right_ned=R[:, 0].tolist(), image_down_ned=R[:, 1].tolist(),
         optical_depression_deg=float(np.degrees(np.arcsin(np.clip(R[2, 2], -1, 1)))),

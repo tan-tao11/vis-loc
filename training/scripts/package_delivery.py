@@ -74,17 +74,14 @@ def package(env, bundle, skip_env=False):
     allowed_dirs = ['configs', 'integration', 'scripts', 'tests', 'docs', 'reference']
     files = [p for p in ROOT.iterdir() if p.is_file() and p.suffix in ('.py', '.md', '.in', '.ini', '.txt') and p.name != 'SHA256SUMS.txt']
     files += [p for d in allowed_dirs for p in (ROOT/d).rglob('*') if p.is_file() and '__pycache__' not in p.parts]
-    required=['train.py','train_mlp_ddp.py','train_lora.py','train_lora_ddp.py','train_lora_aug.py',
-        'train_lora_aug_ddp.py','appearance_augmentation.py','ddp_runtime.py','validate_geometry.py','outputs.py',
-        'scripts/train_mlp_ddp.ps1','scripts/train_lora_ddp.ps1','scripts/train_lora_aug.ps1','scripts/train_lora_aug_ddp.ps1',
-        'configs/lora_aug.yaml','configs/lora_aug_ddp.yaml']
+    required=['train.py','extract_features.py','prepare_dataset.py','scc_inference.py','scc_oblique.py','validate_geometry.py',
+        'outputs.py','scripts/run_mlp.ps1','configs/slant.yaml']
     source_files={p.relative_to(ROOT).as_posix():p for p in files}
     if not set(required)<=set(source_files): raise ValueError('Missing integrated feature: '+str(set(required)-set(source_files)))
     if any(p.suffix.lower() in ('.pth','.pt','.ckpt','.safetensors') for p in files): raise ValueError('Weight file in source payload')
     release={'format_version':1,'created_utc':datetime.now(timezone.utc).isoformat(),'integrated_install':True,
         'requires_addon_installation':False,'dino_weights_included':False,
-        'features':['mlp_single','mlp_ddp','lora_single','lora_ddp','lora_augmentation_single','lora_augmentation_ddp',
-                    'geometry_validation','evaluation_html_csv_images','training_and_augmentation_previews'],
+        'features':['mlp_single','oblique_slant','geometry_validation','evaluation_html_csv_images'],
         'python':sys.version.split()[0],
         'torch':importlib.metadata.version('torch'),
         'source_sha256':{name:sha256(p) for name,p in sorted(source_files.items())}}
@@ -104,11 +101,11 @@ def package(env, bundle, skip_env=False):
         conda_pack.pack(prefix=str(env), output=str(bundle/'environment_win64_py310_cu118.zip'), format='zip', force=True)
     shutil.copy2(ROOT/'scripts/offline_install.ps1', bundle/'offline_install.ps1')
     shutil.copy2(ROOT/'scripts/common.ps1', bundle/'common.ps1')
-    for name in ('README_中文.md', 'docs/验证状态.md'):
+    for name in ('README.md', 'docs/倾斜训练与部署指南.md'):
         if (ROOT/name).is_file(): shutil.copy2(ROOT/name, bundle/Path(name).name)
     # Standalone backup ZIP has its own hash manifest; it does not require archive A.
     backup_files = [bundle/name for name in ('source.zip', 'model_and_source.zip', 'release_manifest.json', 'offline_install.ps1', 'common.ps1',
-        'requirements.lock.txt', 'conda_explicit.json', 'asset_sources.json', 'wheel_sources.json', 'README_中文.md', '验证状态.md')]
+        'requirements.lock.txt', 'conda_explicit.json', 'asset_sources.json', 'wheel_sources.json', 'README.md', '倾斜训练与部署指南.md')]
     backup_files += [f for directory in ('wheelhouse', 'conda_packages', 'installers', 'validation') for f in (bundle/directory).rglob('*')
         if f.is_file() and f.suffix.lower() not in ('.pth','.pt','.ckpt','.safetensors')]
     backup_hashes = '\n'.join(f'{sha256(f)}  {f.relative_to(bundle).as_posix()}' for f in sorted(backup_files))+'\n'

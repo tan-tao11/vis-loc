@@ -50,7 +50,8 @@ DEFAULTS = dict(
     max_track_gap=15,         # frames without accepted fix before returning to acquisition
     max_tentative_gap=2,      # frames a tentative fix waits for confirmation
     min_fix_inliers=40,
-    reset_gap=100)            # frame-number jump (or decrease) that starts a new sequence
+    reset_gap=100,            # frame-number jump (or decrease) that starts a new sequence
+    offset_model=False)       # True: prior error is a constant offset; centre = this prior + (last fix - its prior)
 
 
 def _robust_line(n, v, iterations=3):
@@ -144,7 +145,8 @@ class PriorTracker:
             vx, vy = s['x_rate'], s['y_rate']
             if self.prev_fix is not None and 0 < self.fix[0]-self.prev_fix[0] <= p['max_track_gap']:
                 d = self.fix[0]-self.prev_fix[0]; vx, vy = (self.fix[1]-self.prev_fix[1])/d, (self.fix[2]-self.prev_fix[2])/d
-            state.update(mode='track' if self.confirmed else 'tentative', x=self.fix[1]+vx*gap, y=self.fix[2]+vy*gap,
+            cx, cy = (x + self.fix[3], y + self.fix[4]) if p['offset_model'] else (self.fix[1]+vx*gap, self.fix[2]+vy*gap)
+            state.update(mode='track' if self.confirmed else 'tentative', x=cx, y=cy,
                          radius_m=p['track_radius_m'] + p['track_growth_m']*gap)
         else:
             mode = p['acquisition']
@@ -154,7 +156,7 @@ class PriorTracker:
             else:
                 tiles = scan_offsets(p['prior_error_m'], cap, p['scan_overlap'])
                 dx, dy = tiles[(self.acquire_count//(2 if p['acquisition'] == 'hybrid' else 1)) % len(tiles)]
-                bx, by = s['x'], s['y']
+                bx, by = (x, y) if p['offset_model'] else (s['x'], s['y'])
                 state.update(mode='scan', x=bx+dx, y=by+dy, radius_m=p['prior_error_m'])
             self.acquire_count += 1
         side = 2*(state['radius_m'] + p['margin_m'])
@@ -176,7 +178,7 @@ class PriorTracker:
             # Acquisition: the result must lie inside the searched window; it starts a tentative track.
             if max(abs(x - s['x']), abs(y - s['y'])) > s['window_m']/2: return False
             self.prev_fix = None; self.confirmed = False
-        self.prev_fix, self.fix = self.fix, (float(number), float(x), float(y))
+        self.prev_fix, self.fix = self.fix, (float(number), float(x), float(y), float(x - s['prior_x']), float(y - s['prior_y']))
         return True
 
     def output(self, x=None, y=None, accepted=False):

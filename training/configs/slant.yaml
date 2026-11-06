@@ -1,0 +1,78 @@
+# 倾斜（DS/NS）红外检索 MLP 头的精简配置：只列需要填写或常调的项，其余继承 train.yaml。
+# 推荐流程：scripts/run_mlp.ps1 -EnvDir <环境> -Config configs/slant.yaml
+base: train.yaml
+output: artifacts/slant         # 每次实验换一个新目录；manifest/特征/训练结果都在这里
+
+data:
+  root: 'D:/SCC_data'
+  per_image_txt: true
+  mapping_confirmed: false      # 核对 mapping_report 后置 true
+  groups:                       # 只用倾斜视角（整体替换 train.yaml 的四组）
+    DS: {directory: day/IR/slant, records: day_IR_slant.txt, dayOrNight: 0, isSlant: 1, expected_isEO: 1}
+    NS: {directory: night/IR/slant, records: night_IR_slant.txt, dayOrNight: 1, isSlant: 1, expected_isEO: 1}
+
+geo:                            # 卫星/DSM：推理同源取图 + 真值足迹标签
+  satellite: 'D:/SCC_data/maps/satellite.tif'
+  dsm: 'D:/SCC_data/maps/dsm.tif'
+  vertical_confirmed: false
+  normal_to_ellipsoid_m: null   # 已核实可填 0
+  dsm_to_platform_offset_m: null
+
+pose:
+  calibration_confirmed: false  # validate_geometry 核对倾斜帧足迹后置 true
+
+preprocess:
+  deployment_confirmed: false
+  query_crop_scale: 0.5         # 块边长按“短边×0.5 的中心区域”的地面足迹估算（= 推理 camera.query_crop_scale）
+
+# ↓↓ 与倾斜 .so 的 naviParams.txt infrared 段逐项相同。候选块由推理原代码生成。
+inference:
+  pose_priori: yp
+  retrieval_overlap_percent: 50
+  reference:
+    window_m: 600               # 只是占位；实际窗口见 candidates
+    image_bands: [1, 1, 1]
+    image_value_range: null     # 非 uint8 卫星必填，例如 [0, 4095]；填错会使候选图全白
+    # 不要写 resolution_m: 1：倾斜窗口近 10 km，沿用 DSM 网格（约 5 m）即可
+  camera:
+    reference_window_scale: 1.2
+    nadir_reference_alignment: false   # 倾斜必须为 false（光轴 = INS X 轴，俯角 = innsPitch）
+    oblique: true                      # 窗口以视场中心为中心 + 查询图俯视矫正 + 候选块按可见区域遮挡
+    query_crop_scale: 0.5              # 与 preprocess.query_crop_scale 相同
+  camera_by_group: {}
+
+candidates:
+  window_mode: meters
+  train_window_m: 12000         # 以视场中心为中心；块约 3 km，每帧约 30 个块
+  eval_window_m: 10000          # = 推理 prior_tracking.max_window_m
+  center_offset_m: 300
+  altitude_error_m: 200         # = 推理先验高度误差；影响块大小和视场前视距离
+  train_negatives: 128          # 每帧块数本来就少，实际全部保留
+  eval_query_stride: 5
+  train_query_stride: 3         # 首轮快速出结果；全量训练改为 1
+
+labels:
+  positive_coverage: 0.6
+  negative_coverage: 0.05
+  max_area_ratio: 8.0           # 倾斜足迹是梯形，块面积约为足迹 5 倍；默认 4 会把正样本全标为“忽略”
+  max_center_distance_ratio: 1.0
+
+split:
+  mode: sequence
+  regions_geojson: null
+  sequence_splits:              # 覆盖实际出现的全部序列名；可不设 test
+    sequence1: train
+    sequence2: train
+    sequence3: val
+
+extract:
+  batch_size: 32                # A4000 16 GB；显存不足会自动减半
+
+model:
+  checkpoint: 'D:/SCC_Loc/weights/dinov2_vitl14_pretrain.pth'
+  checkpoint_sha256: d5383ea8f4877b2472eb973e0fd72d557c7da5d3611bd527ceeb1d7162cbf428
+
+train:
+  epochs: 30
+  patience: 30                  # 跑满余弦周期；最终仍取验证集最好的一轮
+  min_lr: 0.00001

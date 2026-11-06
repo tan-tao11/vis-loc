@@ -11,6 +11,7 @@ import math
 import cv2
 import numpy as np
 from PIL import Image
+from scc_oblique import view_centre, rectify_query, apply_mask
 
 VERBATIM = {'camera_matrix': 'single-so/python/backends.py', 'optical_pose': 'single-so/python/backends.py',
             'dumpRotateImage': 'projects/SCC-Loc/utils.py', 'estimate_reference_side': 'projects/SCC-Loc/utils.py',
@@ -258,6 +259,7 @@ def open_reference(c, window_m):
 def camera_for(c, group):
     camera = dict(c['inference'].get('camera', {}))
     camera.update(c['inference'].get('camera_by_group', {}).get(group, {}))
+    camera.setdefault('query_crop_scale', float(c['preprocess'].get('query_crop_scale', 1.0)))
     return camera
 
 
@@ -271,10 +273,19 @@ def frame_retrieval(full_ref, t, width, height, is_eo, is_slant, camera, pose_pr
     """
     if pose_priori not in ('yp', 'unknown'): raise ValueError('pose_priori must be yp or unknown')
     if window_m is not None: full_ref.window_m = float(window_m)
-    view = full_ref.for_frame(t)
-    K = camera_matrix(camera, t, width, height)
-    agl = view.agl(t, camera)
     yaw, elevation = (0., -90.) if pose_priori == 'unknown' else optical_pose(t, bool(is_eo), camera)
+    tv, agl0 = t, None
+    if camera.get('oblique', False) and pose_priori == 'yp':
+        # = BaseBackend.prepare (oblique): aircraft AGL from a ~200 m read, map centred on the optical-axis ground point.
+        old = full_ref.window_m; full_ref.window_m = 200.
+        try: agl0 = full_ref.for_frame(t).agl(t, camera)
+        finally: full_ref.window_m = old
+        x0, y0 = full_ref.forward.transform(t['lon'], t['lat'], errcheck=True)
+        vx0, vy0 = view_centre(x0, y0, agl0, yaw, elevation)
+        tv = dict(t); tv['lon'], tv['lat'] = full_ref.inverse.transform(vx0, vy0, errcheck=True)
+    view = full_ref.for_frame(tv)
+    K = camera_matrix(camera, t, width, height)
+    agl = agl0 if agl0 is not None else view.agl(t, camera)
     data = dict(rel_height=agl, yaw=yaw, pitch=elevation, width=width, height=height,
                 cam_size=math.hypot(width, height), focal_len=float(K[0, 0]), focal_y=float(K[1, 1]),
                 roll_deg=float(t['inns_roll']) if bool(is_eo) else 0.0,
@@ -282,7 +293,7 @@ def frame_retrieval(full_ref, t, width, height, is_eo, is_slant, camera, pose_pr
                 is_slant=bool(is_slant), pose_known=(pose_priori == 'yp'), map_hw=tuple(view.image.shape[:2]))
     if pose_priori == 'yp': ref_image, rotation = dumpRotateImage(view.image, yaw)
     else: ref_image, rotation = view.image, np.eye(2, 3, dtype=np.float32)
-    side = min(width, height)
+    side = int(min(width, height)*float(camera.get('query_crop_scale', 1.0)))
     with contextlib.redirect_stdout(io.StringIO()):  # silence per-frame [REF_WINDOW] prints
         side_m = estimate_reference_side(data, [side, side])
     a = math.radians(yaw if pose_priori == 'yp' else 0.0)
@@ -358,9 +369,27 @@ class TileSource:
             self._key = g['id']
         return self._frame
 
+    def oblique(self, g):
+        return bool(camera_for(self.c, g['group']).get('oblique', False)) and self.c['inference'].get('pose_priori', 'yp') == 'yp'
+
+    def query(self, g, size=336):
+        """Query as the deployed backend stages it: bird's-eye (oblique) or centre crop."""
+        from preprocess import query_gray, query_image
+        if not self.oblique(g):
+            return query_image(g['image'], self.c['preprocess'])[0]
+        f = self.frame(g)
+        if '_query' not in f:
+            gray, _ = query_gray(g['image'], self.c['preprocess'])
+            f['_query'], f['_mask'] = rectify_query(gray, f['K'], f['agl'], f['elevation'], f['side_px'] * f['view'].res, size)
+        return f['_query']
+
     def tile(self, g, index, size=336):
         f = self.frame(g)
-        return crop_tile(f['ref_image'], g['candidates'][index]['mid'], f['side_px'], size)
+        t = crop_tile(f['ref_image'], g['candidates'][index]['mid'], f['side_px'], size)
+        if self.oblique(g):
+            self.query(g, size)
+            t = apply_mask(t, f['_mask'])
+        return t
 
     def close(self):
         if self.ref is not None: self.ref.close()

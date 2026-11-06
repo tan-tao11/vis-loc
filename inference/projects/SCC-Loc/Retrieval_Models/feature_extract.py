@@ -120,6 +120,8 @@ def extract_features(retrieval_size, config, method_dict, MID, block_size, SATEL
             mid_x, mid_y = mids[item, :]
             img = cv2.resize(SATELLITE[int(mid_x - block_size[0] / 2):int(mid_x + block_size[0] / 2),
                   int(mid_y - block_size[1] / 2):int(mid_y + block_size[1] / 2)], (retrieval_size,retrieval_size))
+            if method_dict.get('tile_mask') is not None:   # oblique: hide what the query cannot see
+                img = np.array(img, copy=True); img[method_dict['tile_mask'] == 0] = 0
             img = Image.fromarray(img)
             img = val_transforms(img)
             batch_images.append(img)

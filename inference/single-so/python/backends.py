@@ -18,6 +18,7 @@ import numpy as np
 from pyproj import CRS, Transformer
 from tuning import read_config, merge, validate_tuning, CVProxy, configure_matcher, match_pair, good_enough
 from prior_tracker import PriorTracker
+from oblique import view_centre, rectify_query
 
 TELEMETRY_KEYS = ("lon", "lat", "altitude", "drone_yaw", "drone_pitch", "drone_roll",
                   "sensor_yaw", "sensor_pitch", "sensor_roll", "inns_yaw", "inns_pitch",
@@ -370,7 +371,7 @@ class BaseBackend:
         try:
             result=self.localize(request, image); error=None
         except Exception as exc:
-            result=None; error=exc
+            result=None; error=exc; import traceback; traceback.print_exc()
         number=int(request["number"])
         if tracker.last is None or tracker.last['number']!=number:
             if error is not None: raise error           # failed before this frame's prediction
@@ -435,7 +436,16 @@ class BaseBackend:
             print('[PRIOR_TRACK] frame=%s mode=%s frames=%d radius=%.0fm window=%.0fm cap=%.0fm block=%s shift=%.0fm alt=%.1f'%(
                 request["number"],state["mode"],state["frames"],state["radius_m"],state["window_m"],state["window_cap_m"],
                 'unknown' if block is None else '%.0fm'%block,math.hypot(state["x"]-x,state["y"]-y),state["altitude"]),flush=True)
-        self.ref = self.full_ref.for_frame(t)
+        oblique = self.oblique()
+        agl0 = None; tv = t
+        if oblique:
+            # Slant camera looks km ahead: aircraft AGL from a small DSM read, then centre the map on the
+            # optical-axis ground point instead of the aircraft (same as training scc_inference.frame_retrieval).
+            agl0 = self.aircraft_agl(t, camera)
+            x0, y0 = self.full_ref.forward.transform(t["lon"], t["lat"], errcheck=True)
+            vx0, vy0 = view_centre(x0, y0, agl0, yaw, elevation)
+            tv = dict(t); tv["lon"], tv["lat"] = self.full_ref.inverse.transform(vx0, vy0, errcheck=True)
+        self.ref = self.full_ref.for_frame(tv)
         # C++ interface is RGB. Both deployed pipelines take BGR arrays.
         image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR) if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
         if float(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).std()) < 1.0:
@@ -445,16 +455,29 @@ class BaseBackend:
             raise ValueError("invalid distortion coefficients")
         if np.any(dist):
             image = cv2.undistort(image, K, dist)
-        agl = self.ref.agl(t, camera)
+        agl = agl0 if oblique else self.ref.agl(t, camera)
         need = self.window_for_block(request, K, agl, yaw, elevation, w, h)
         if need is not None and self.full_ref.window_m > 0 and need > self.full_ref.window_m:
             # A small (tracking) window cannot hold one rotated block -> REF_WINDOW failure. Enlarge once.
             self.full_ref.window_m = need
-            self.ref = self.full_ref.for_frame(t)
-            agl = self.ref.agl(t, camera)
+            self.ref = self.full_ref.for_frame(tv)
+            agl = agl0 if oblique else self.ref.agl(t, camera)
             if isinstance(self.trace.get('prior'), dict): self.trace['prior']['window_m'] = need
             print('[PRIOR_TRACK] window enlarged to %.0fm for the block size' % need, flush=True)
         return t, image, K, agl, yaw, elevation
+
+    def oblique(self):
+        """Slant pipeline (camera.oblique): view-centred map window + bird's-eye query + masked tiles."""
+        return bool(self.camera.get("oblique", False)) and getattr(self, "pose", "yp") == "yp"
+
+    def aircraft_agl(self, t, camera):
+        """AGL at the aircraft prior from a ~200 m DSM read (the search map is not centred there)."""
+        old = self.full_ref.window_m
+        try:
+            self.full_ref.window_m = 200.
+            return self.full_ref.for_frame(t).agl(t, camera)
+        finally:
+            self.full_ref.window_m = old
 
     def block_side(self, request, K, agl, yaw, elevation, w, h):
         """SCC block side (m) exactly as utils.retrieval_all estimates it; None if unavailable."""
@@ -467,7 +490,8 @@ class BaseBackend:
         try:
             import contextlib, io
             with contextlib.redirect_stdout(io.StringIO()):
-                return float(api.estimate_reference_side(data, [min(w, h), min(w, h)]))
+                s = int(min(w, h) * float(self.camera.get("query_crop_scale", 1.0)))
+                return float(api.estimate_reference_side(data, [s, s]))
         except Exception:
             return None
 
@@ -643,6 +667,7 @@ class SCCBackend(BaseBackend):
                     width=w, height=h, cam_size=math.hypot(w, h), focal_len=float(K[0, 0]))
         data.update(
             focal_y=float(K[1, 1]),
+            query_crop_scale=float(self.camera.get("query_crop_scale", 1.0)),
             roll_deg=float(t["inns_roll"]) if bool(request["isEO"]) else 0.0,
             reference_window_scale=float(self.camera.get("reference_window_scale", 1.2)),
             is_slant=bool(request.get("isSlant", False)),
@@ -681,15 +706,34 @@ class SCCBackend(BaseBackend):
               f'AGL={agl:.2f} yaw_used={yaw:.3f} elevation_used={elevation:.3f} '
               f'inns_YPR=({t["inns_yaw"]:.3f},{t["inns_pitch"]:.3f},{t["inns_roll"]:.3f})', flush=True)
         self.trace['prepare_s']=time.perf_counter()-self.frame_start
+        self.methods['tile_mask'] = None
+        staged = image
+        if self.oblique():
+            # Bird's-eye query on the exact ground square of one SCC block, heading up like the rotated map.
+            import contextlib, io
+            with contextlib.redirect_stdout(io.StringIO()):
+                side_m = self.api.estimate_reference_side(data, self.api.resolution_size(data, self.opt)[1])
+            side_px = max(10, 2 * int(math.ceil(side_m / (2 * res))))
+            gray, mask = rectify_query(image[..., 0], K, agl, elevation, side_px * res)
+            staged = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+            data['query_prepared'] = True
+            self.methods['tile_mask'] = mask
+            print('[OBLIQUE] frame=%s block=%.0fm visible=%.2f' % (request["number"], side_px * res, float(mask.mean())), flush=True)
         with tempfile.TemporaryDirectory(prefix="nav-ir-") as run, self.torch.inference_mode():
             query = str(Path(run)/"query.png")
-            if not cv2.imwrite(query, image):
+            if not cv2.imwrite(query, staged):
                 raise RuntimeError("failed to stage query for SCC retrieval")
             self.torch.cuda.synchronize();start=time.perf_counter()
             _, rows, cols, _, widths, heights, scale, _, scores = self.api.retrieval_all(
                 ref_image, query, data, self.ref.res, rotation, run, self.opt, self.region, self.settings, self.methods)
             self.torch.cuda.synchronize()
             self.trace['retrieval_s']=time.perf_counter()-start
+            inv = cv2.invertAffineTransform(rotation)
+            for k in range(min(5, len(rows))):
+                ux, uy = inv @ np.array([cols[k] + widths[k]/2 - .5, rows[k] + heights[k]/2 - .5, 1.0])
+                clon, clat = self.ref.inverse.transform(self.ref.x0 + ux*res, self.ref.y0 - uy*res)
+                print(f'[RETRIEVAL_TOP] frame={request["number"]} rank={k+1} lon_lat=({clon:.8f},{clat:.8f}) '
+                      f'score={float(np.ravel(scores)[k]):.4f} from_prior_m={math.hypot(self.ref.x0+ux*res-px, self.ref.y0-uy*res-py):.1f}', flush=True)
             blh,counts,errors,retrieval,uncertainty=[],[],[],[],[]
             one=lambda v,i:[v[i]] if isinstance(v,(list,tuple,np.ndarray)) else v
             for rank in range(min(len(rows),self.tuning['max_candidates'])):

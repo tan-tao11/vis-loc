@@ -4,7 +4,16 @@
 
 已合并参考图旋转、可选近下视对齐分支、简化正方形候选窗口、`reference_window_scale`、关闭 SCC 排序后 SGVA 位移／放大、搜索中心日志，以及可选 matching 调试输出。没有混入此前未采用的查询图旋转实验、矩形足迹／自动地图扩展方案，也没有新接入 MLP 或 LoRA。
 
-**当前搜索地图仍围绕飞机位置先验读取。`VIEW_CENTER` 是估算的画面中心地面投影，用于原 PDE 等计算及日志，没有用于移动地图读取中心。** 代码同步不代表已经修复这个斜视问题，或已经完成两端对齐。
+## 倾斜专用版本（2026-11-07，slant 分支）
+
+本源码用于**倾斜（DS/NS）专用 .so**；垂直数据使用另一个 .so。`infrared.camera.oblique: true` 时：
+
+1. `BaseBackend.prepare` 先在飞机先验处读 200 m 的 DSM 得到 AGL，再把搜索地图中心前移到光轴地面点（AGL/tan(俯角)），返回给 SCC 的先验仍是飞机位置；
+2. `SCCBackend.localize` 用 `single-so/python/oblique.py` 把查询图矫正成“一个块大小、航向朝上”的俯视图后再送检索（`utils.retrieval_all` 的 `query_prepared`）；
+3. `feature_extract` 用同一个可见区域 `tile_mask` 遮挡每个候选块；
+4. 块大小按短边 × `camera.query_crop_scale` 的中心区域估算。
+
+训练端 `training/scc_oblique.py` 与 `oblique.py` 逐字节相同。配置见 `naviParams.example.txt`，步骤见 [倾斜训练与部署指南](../training/docs/倾斜训练与部署指南.md)。另含 `prior_tracker` 的 `offset_model`（固定 / 缓慢变化的先验偏移）、失败时打印堆栈和 `[RETRIEVAL_TOP]` 日志。
 
 ## 目录与入口
 

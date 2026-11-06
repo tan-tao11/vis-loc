@@ -1326,7 +1326,7 @@ def resolution_size(data, opt):
     resolution = 2 * data['rel_height'] / np.sin(-np.pi * pitch / 180) * cam_size/2/focal_len \
                  / sqrt(img_width ** 2 + img_height ** 2)
 
-    min_size = min(img_width, img_height) 
+    min_size = int(min(img_width, img_height) * float(data.get('query_crop_scale', 1.0)))
     size = np.array([min_size, min_size])
     return resolution, size
 
@@ -1509,7 +1509,8 @@ def retrieval_all(ref_image, UAV_path, uav_data, ref_resolution, matRotation, sa
 
     mids = MID.reshape(-1, 2)
 
-    UAV_image = crop_center(UAV_path, drone_size[0], drone_size[1])
+    # Oblique pipeline stages an already rectified query (single-so/python/oblique.py); otherwise centre crop.
+    UAV_image = Image.fromarray(cv2.imread(UAV_path)) if uav_data.get('query_prepared') else crop_center(UAV_path, drone_size[0], drone_size[1])
 
     retrieval_model = method_dict['retrieval_model']
     img_transform = method_dict['img_transform']

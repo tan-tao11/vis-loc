@@ -96,7 +96,7 @@ def _draw_rows(m, c, selected, rows_by_id, evaluation, tiles, canvas, draw, erro
     for i, g in enumerate(selected):
         top = 55+i*290
         try:
-            q, _ = query_image(g['image'], c['preprocess'])
+            q = tiles.query(g, c['preprocess']['size'])
             canvas.paste(Image.fromarray(q).convert('RGB').resize((210, 210)), (15, top))
         except (ValueError, OSError) as e:
             errors.append({'id': g['id'], 'panel': 'query', 'error': str(e)})

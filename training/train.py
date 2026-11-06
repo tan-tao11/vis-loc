@@ -33,7 +33,7 @@ def train(c, manifest, cache_dir, output, device=None):
     seed_all(c['seed']); device = device or c['train']['device']; tc = c['train']
     from common import require_usable_device; require_usable_device(device)
     m, arrays, index = load_cache(manifest, cache_dir)
-    if digest(c) != m['fingerprint']['config']: raise ValueError('Config/cache mismatch; create new run')
+    if digest({k: v for k, v in c.items() if k != 'train'}) != digest({k: v for k, v in m['config'].items() if k != 'train'}): raise ValueError('Config/cache mismatch; create new run')
     if tc['loss'] != 'grouped_multi_positive': raise ValueError('Only one-direction grouped loss implemented')
     if tc['scheduler'] != 'cosine': raise ValueError('Unsupported scheduler')
     groups = [g for g in m['groups'] if g['split'] == 'train' and any(x['label'] == 1 for x in g['candidates'])]
@@ -43,11 +43,12 @@ def train(c, manifest, cache_dir, output, device=None):
         'synthetic': m['synthetic'], 'method': 'mlp512', 'selection_split': 'val'})
     heads = create_heads(c).to(device)
     optimizer = torch.optim.AdamW(heads.parameters(), lr=tc['lr'], weight_decay=tc['weight_decay'])
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, tc['epochs'])
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, tc['epochs'], eta_min=float(tc.get('min_lr', 0.)))
     buckets = defaultdict(list)
     for g in groups: buckets[g['group']].append(g)
     history = []; best = -1.; stale = 0; hard = {}
     for epoch in range(tc['epochs']):
+        print(f'[train] epoch {epoch} start', flush=True)
         if epoch % tc['hard_refresh_epochs'] == 0:
             hard = mine_hard_negatives(heads, groups, arrays, device, tc['hard_negative_count'])
             write_json(out/f'hard_negatives_epoch_{epoch:03}.json', {'split': 'train', 'cache_fingerprint': index['fingerprint'], 'selected_indices': hard})

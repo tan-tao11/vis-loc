@@ -6,8 +6,8 @@ import cv2
 import numpy as np
 from PIL import Image
 
-def center_crop_box(width, height):
-    side = min(width, height)
+def center_crop_box(width, height, scale=1.0):
+    side = int(min(width, height)*scale)
     # Mirrors snapshot integer centre / half-size, including odd dimensions.
     return (width//2-side//2, height//2-side//2, width//2+side//2, height//2+side//2)
 
@@ -26,15 +26,20 @@ def intensity_u8(a, spec, valid=None, *, mask_only=False):
     out[~mask] = 0
     return out.astype(np.uint8), mask
 
-def query_image(filename, cfg):
+def query_gray(filename, cfg):
+    """Whole IR frame as uint8 gray (+ valid mask), before any crop."""
     a = cv2.imdecode(np.fromfile(filename, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
     if a is None: raise ValueError(f'Cannot read {filename}')
     if a.ndim == 3:
         if a.shape[2] < 3 or not (np.array_equal(a[..., 0], a[..., 1]) and np.array_equal(a[..., 0], a[..., 2])):
             raise ValueError('IR image has unequal color channels')
         a = a[..., 0]
-    u, valid = intensity_u8(a, cfg['intensity']['ir'])
-    box = center_crop_box(a.shape[1], a.shape[0]); l, t, r, b = box
+    return intensity_u8(a, cfg['intensity']['ir'])
+
+def query_image(filename, cfg):
+    u, valid = query_gray(filename, cfg)
+    a = u
+    box = center_crop_box(a.shape[1], a.shape[0], float(cfg.get('query_crop_scale', 1.0))); l, t, r, b = box
     if not valid[t:b, l:r].all(): raise ValueError('Query crop contains NoData; conservative rejection')
     out = Image.fromarray(u).crop(box).resize((cfg['size'], cfg['size']), Image.Resampling.BICUBIC)
     return np.asarray(out), box

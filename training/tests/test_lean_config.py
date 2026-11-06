@@ -7,10 +7,10 @@ from prepare_dataset import subsample_train, satellite_intensity_check, prepare
 from tests.test_sequence_split import sequence_fixture
 
 
-def test_mlp_config_inherits_train_defaults():
-    full, lean = config(ROOT/'configs/train.yaml'), config(ROOT/'configs/mlp.yaml')
+def test_slant_config_inherits_train_defaults():
+    full, lean = config(ROOT/'configs/train.yaml'), config(ROOT/'configs/slant.yaml')
     assert 'base' not in lean and lean['model']['gem_p'] == full['model']['gem_p']
-    assert lean['labels'] == full['labels'] and lean['extract'] == dict(full['extract'], batch_size=32)
+    assert lean['labels'] == dict(full['labels'], max_area_ratio=8.0) and lean['extract'] == dict(full['extract'], batch_size=32)
     assert lean['split']['sequence_splits'] and lean['candidates']['train_negatives'] == 128
     assert lean['inference']['reference']['georeference'] == 'auto' and lean['inference']['camera']['reference_window_scale'] == 1.2
     assert not any(lean[s][k] for s, k in [('data', 'mapping_confirmed'), ('pose', 'calibration_confirmed'),
@@ -57,12 +57,15 @@ def test_intensity_guard_flags_white_tiles(tmp_path, dtype, value_range, bad):
         assert satellite_intensity_check(ref)['mapped_white_fraction'] < .1
 
 
-def test_mlp_config_is_vertical_only_and_nadir_aligned():
+def test_slant_config_is_oblique_only():
     from scc_inference import optical_pose, camera_for
-    c = config(ROOT/'configs/mlp.yaml')
-    assert set(c['data']['groups']) == {'DV', 'NV'} and all(g['isSlant'] == 0 for g in c['data']['groups'].values())
-    t = dict(inns_yaw=306.5, inns_pitch=0., inns_roll=0., sensor_yaw=0.2, sensor_pitch=-0.7, sensor_roll=0.8)
-    assert optical_pose(t, False, camera_for(c, 'NV')) == (306.5, -90.0)
+    c = config(ROOT/'configs/slant.yaml')
+    assert set(c['data']['groups']) == {'DS', 'NS'} and all(g['isSlant'] == 1 for g in c['data']['groups'].values())
+    cam = camera_for(c, 'DS')
+    assert cam['oblique'] and not cam['nadir_reference_alignment'] and cam['query_crop_scale'] == c['preprocess']['query_crop_scale']
+    t = dict(inns_yaw=27.6749821, inns_pitch=-15.3483686, inns_roll=-0.3845332)   # bice.md DS frame
+    yaw, elevation = optical_pose(t, True, cam)
+    assert abs(yaw - 27.6749821) < 1e-6 and abs(elevation + 15.3483686) < 1e-6
 
 
 def test_small_gpu_is_refused(monkeypatch):

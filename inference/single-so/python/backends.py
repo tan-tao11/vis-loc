@@ -399,7 +399,11 @@ class BaseBackend:
         try:
             result=self.localize(request, image); error=None
         except Exception as exc:
-            result=None; error=exc; import traceback; traceback.print_exc()
+            result=None; error=exc
+            if isinstance(exc, RuntimeError) and 'no valid PnP' in str(exc):   # expected failure: one line
+                print('[LOCALIZE_FAIL] frame=%s %s'%(request.get('number'),exc),flush=True)
+            else:
+                import traceback; traceback.print_exc()
         number=int(request["number"])
         if tracker.last is None or tracker.last['number']!=number:
             if error is not None: raise error           # failed before this frame's prediction

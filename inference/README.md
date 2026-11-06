@@ -53,6 +53,9 @@
 
 ## 使用与构建
 
+**从旧 .so 重新编译（推荐）**：`cd single-so && bash rebuild_from_old_so.sh /path/to/old/libvNavigatorInterface.so`（取回内嵌运行时 → `repack_runtime.py` → `build.sh` → `runtime_check`）。
+
+
 本目录不是可在Windows直接运行的推理环境。实际入口仍为Orin／Linux官方框架加载 `.so`。运行时映射为：`single-so/python/` → `<runtime>/adapter/`，`projects/` → `<runtime>/projects/`；ARM64 Python、env、extra、native依赖另行准备。
 
 先对照实际缓存，工具只读、不覆盖：

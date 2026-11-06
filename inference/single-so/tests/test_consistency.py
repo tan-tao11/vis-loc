@@ -184,3 +184,27 @@ class SelfEvalTests(unittest.TestCase):
         self.assertEqual(f['inliers'], 150); self.assertEqual(f['rank'], 1); self.assertEqual(f['agreeing'], 1)   # rank-2 block is 1 km away: its identical fix is inconsistent
         self.assertLess(f['block_dist'], 30.); self.assertAlmostEqual(f['dz'], -10.); self.assertAlmostEqual(f['score_margin'], .11)
         self.assertEqual(value, 1)
+
+
+class TrackFastTests(unittest.TestCase):
+    def test_tracking_matches_fewer_candidates(self):
+        import types
+        from pyproj import Transformer
+        inv = Transformer.from_crs('EPSG:32645', 'EPSG:4326', always_xy=True); fwd = Transformer.from_crs('EPSG:4326', 'EPSG:32645', always_xy=True)
+        x0, y0 = fwd.transform(87., 42.)
+        good = inv.transform(x0 + 20., y0 - 10.) + (1490., 150)
+        # not tracking: both candidates are matched
+        b, _ = SCCLocalizeCheckTests().make([good, good]); b.localize({'number': 1, 'isEO': 0}, None)
+        self.assertEqual(b.trace['candidates_attempted'], 2)
+        # tracking: the first fix lies within the tracking radius -> stop after one candidate
+        b, _ = SCCLocalizeCheckTests().make([good, good]); b.tuning['track_max_candidates'] = 2
+        b.tracker = types.SimpleNamespace(last=dict(number=1, mode='track', x=x0, y=y0, radius_m=150.))
+        b.localize({'number': 1, 'isEO': 0}, None)
+        self.assertEqual(b.trace['candidates_attempted'], 1); self.assertEqual(b.trace['candidate_limit'], 2)
+        # tracking with track_max_candidates=1 and a fix outside the radius: still only one candidate
+        far = inv.transform(x0 + 400., y0) + (1490., 150)
+        b, _ = SCCLocalizeCheckTests().make([far, good]); b.tuning['track_max_candidates'] = 1
+        b.check = consistency.settings({'enabled': False})
+        b.tracker = types.SimpleNamespace(last=dict(number=1, mode='track', x=x0, y=y0, radius_m=150.))
+        b.localize({'number': 1, 'isEO': 0}, None)
+        self.assertEqual(b.trace['candidates_attempted'], 1)

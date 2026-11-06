@@ -49,7 +49,7 @@ infrared:
     nadir_reference_alignment: false   # 倾斜必须为 false：光轴 = INS X 轴，俯角 = innsPitch
     oblique: true                      # 视场中心窗口 + 查询图俯视矫正 + 候选块可见区域遮挡（single-so/python/oblique.py）
     query_crop_scale: 0.5              # = training preprocess.query_crop_scale；块边长按短边×0.5 的中心区域估算
-  tuning: {min_result_inliers: 15}
+  tuning: {min_result_inliers: 15, track_max_candidates: 2}   # 跟踪阶段最多精匹配 2 个候选，第一个就在跟踪半径内则直接停
   # PnP 结果须与其检索块一致（视场地面点在块内、高度与先验相差 <= altitude_m），否则丢弃。
   # 倾斜块约 3 km，检索中心换算的位置误差约 1 km，所以不回退到检索位置（retrieval_fallback: false）。
   consistency: {enabled: true, block_ratio: 0.75, altitude_m: 300, retrieval_fallback: false}

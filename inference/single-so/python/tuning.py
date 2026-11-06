@@ -19,7 +19,8 @@ LEGACY = dict(initial_candidates=5, max_candidates=5, adaptive_candidates=False,
     early_min_inliers=40, early_max_reprojection_px=3., early_min_coverage=.12,
     early_agreement_m=30., early_require_agreement=True,
     min_result_inliers=5, reject_weak_results=False, resize_ratio=.3,
-    scc_crop_gain=1.5, anyvis_patch_scale=1., search_window_m=600., profile_timing=True)
+    scc_crop_gain=1.5, anyvis_patch_scale=1., search_window_m=600., profile_timing=True,
+    track_max_candidates=0)   # >0: while tracking, match at most this many candidates (0 = max_candidates)
 
 
 def merge(a,b):
@@ -59,7 +60,7 @@ def validate_tuning(p):
     integer_bounds={'initial_candidates':(1,20),'max_candidates':(1,20),'coarse_resolution':(224,1120),
         'refine_resolution':(224,1792),'sample_matches':(128,10000),'pre_homography_iterations':(100,20000),
         'post_homography_iterations':(100,20000),'pnp_iterations':(100,20000),
-        'early_min_inliers':(5,10000),'min_result_inliers':(5,10000)}
+        'early_min_inliers':(5,10000),'min_result_inliers':(5,10000),'track_max_candidates':(0,20)}
     for key,(lo,hi) in integer_bounds.items():
         v=p[key]
         if isinstance(v,bool) or not isinstance(v,int) or not lo<=v<=hi:raise ValueError(f'{key} must be an integer in [{lo},{hi}]')

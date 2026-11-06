@@ -45,7 +45,7 @@ infrared:
   camera:
     reference_window_scale: 1.2
     nadir_reference_alignment: true    # 垂直必须为 true
-  tuning: {min_result_inliers: 15}
+  tuning: {min_result_inliers: 15, track_max_candidates: 2}   # 跟踪阶段最多精匹配 2 个候选，第一个就在跟踪半径内则直接停
   # PnP 结果须与其检索块一致，否则丢弃；都不一致时输出检索块（前几名加权）换算的位置，置信度 0，不用于跟踪。
   # 检索位置误差约 0.13 x AGL，AGL 高于 max_fallback_agl 时不回退。
   consistency: {enabled: true, block_ratio: 0.75, altitude_m: 300, retrieval_fallback: true, max_fallback_agl: 1200}

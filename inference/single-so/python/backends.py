@@ -781,7 +781,14 @@ class SCCBackend(BaseBackend):
             centres=[consistency.block_centre(rotation,rows[k],cols[k],one(heights,k)[0],one(widths,k)[0],self.ref.x0,self.ref.y0,res)
                      for k in range(len(rows))]
             checks=[]   # per candidate (ok, reason, block distance m, dz m), also feeds selfEval
-            for rank in range(min(len(rows),self.tuning['max_candidates'])):
+            # Tracking: the window is small and centred on the prediction -> fewer candidates, stop at the first good fix.
+            tr=getattr(self,'tracker',None)
+            st=tr.last if tr is not None and tr.last is not None and tr.last['number']==int(request['number']) else None
+            tracking=st is not None and st['mode']=='track'
+            limit=self.tuning['max_candidates']
+            if tracking and self.tuning.get('track_max_candidates',0):limit=min(limit,self.tuning['track_max_candidates'])
+            self.trace['candidate_limit']=limit
+            for rank in range(min(len(rows),limit)):
                 if self.trace['candidates_attempted']>=self.tuning['initial_candidates']:self.trace['fallback_used']=True
                 self.last_geometry={};self.trace['candidates_attempted']+=1
                 start=time.perf_counter()
@@ -803,6 +810,10 @@ class SCCBackend(BaseBackend):
                     ok=ok or not self.check['enabled']
                 consistent.extend([ok]*len(pp)); checks.extend([(ok,why,dist,dz,rank)]*len(pp))
                 if self.candidate_finished(xy,nn[0] if nn else 0,ee[0] if ee else None) and ok:break
+                if (tracking and ok and xy is not None and nn and nn[0]>=self.tuning['min_result_inliers']
+                        and math.hypot(xy[0]-st['x'],xy[1]-st['y'])<=st['radius_m']):
+                    print('[TRACK_FAST] frame=%s stop after candidate %d (fix within the tracking radius)'%(request["number"],rank+1),flush=True)
+                    break
         valid = [i for i, p in enumerate(blh) if counts[i] >= self.tuning['min_result_inliers'] and
                  all(p.get(k) is not None and np.isfinite(p[k]) for k in ("L", "B", "H")) and
                  (not self.check['enabled'] or consistent[i])]

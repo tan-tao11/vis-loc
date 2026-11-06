@@ -93,3 +93,32 @@ def test_oblique_window_query_and_tiles(tmp_path):
             assert labels[near] == 1, (g['id'], near)
     finally:
         tiles.close()
+
+
+def test_oblique_extract_train_evaluate(tmp_path, monkeypatch):
+    """prepare -> extract (rectified query, masked tiles) -> train -> evaluate on the slant fixture."""
+    import extract_features as extraction
+    import cache as cache_module
+    from tests.test_end_to_end import fake_backbone
+    from train import train
+    from evaluate import evaluate_arrays, load_heads_checkpoint
+    fake_backbone(monkeypatch)
+    c = slant_fixture(tmp_path); c['train'].update(epochs=3, patience=3, device='cpu')
+    c['split'] = dict(c['split'], mode='sequence', regions_geojson=None,
+                      sequence_splits={'sequence_train': 'train', 'sequence_val': 'val', 'sequence_test': 'test'})
+    m = prepare(copy.deepcopy(c)); manifest = tmp_path/'run/manifest.json'; features = tmp_path/'run/features'
+    extraction.extract(c, manifest, features, 'cpu'); extraction.merge(c, manifest, features, 1)
+    best = train(c, manifest, features, tmp_path/'run/training', 'cpu')
+    heads, _ = load_heads_checkpoint(best)
+    _, arrays, _ = cache_module.load_cache(manifest, features)
+    report = evaluate_arrays(m, arrays, heads, 'val', 'cpu')
+    assert {'gem1024', 'heads'} <= set(report['results'])
+    # the cached query feature is that of the rectified query, not of the centre crop
+    from preprocess import query_image, tensor_image
+    tiles = TileSource(c); g = m['groups'][0]
+    try:
+        rect, crop = tiles.query(g, 336), query_image(g['image'], c['preprocess'])[0]
+    finally:
+        tiles.close()
+    f = lambda u: extraction.forward_frozen(None, tensor_image(u, c['preprocess']).unsqueeze(0), True)[0].numpy()
+    assert np.allclose(arrays[g['id']][0], f(rect), atol=1e-5) and not np.allclose(arrays[g['id']][0], f(crop), atol=1e-3)

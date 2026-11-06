@@ -81,6 +81,16 @@ class GeoRaster:
         self.from_wgs = Transformer.from_crs(4326, self.crs, always_xy=True)
         self.to_wgs = Transformer.from_crs(self.crs, 4326, always_xy=True)
 
+    def _block_pixels(self, i, j, block=256, max_blocks=256):
+        """The 2x2 window at (col i, row j) from a cached (block+1)^2 read; same values and mask as a direct read."""
+        cache = self.__dict__.setdefault('_blocks', {})
+        key = (i//block, j//block); c0, r0 = key[0]*block, key[1]*block
+        data = cache.get(key)
+        if data is None:
+            if len(cache) >= max_blocks: cache.clear()
+            data = cache[key] = self.ds.read(1, window=Window(c0, r0, min(block+1, self.width-c0), min(block+1, self.height-r0)), masked=True)
+        return data[j-r0:j-r0+2, i-c0:i-c0+2]
+
     def close(self): self.ds.close()
     def __enter__(self): return self
     def __exit__(self, *args): self.close()
@@ -97,7 +107,7 @@ class GeoRaster:
         col -= .5; row -= .5
         i, j = math.floor(col), math.floor(row)
         if i < 0 or j < 0 or i+1 >= self.width or j+1 >= self.height: raise ValueError('DSM out_of_bounds')
-        a = self.ds.read(1, window=Window(i, j, 2, 2), masked=True)
+        a = self._block_pixels(i, j)
         if np.ma.getmaskarray(a).any() or not np.isfinite(a).all(): raise ValueError('DSM NoData')
         u, v = col-i, row-j
         return float(a[0, 0]*(1-u)*(1-v)+a[0, 1]*u*(1-v)+a[1, 0]*(1-u)*v+a[1, 1]*u*v)

@@ -7,6 +7,8 @@ use the calibrated ground-truth footprint. No GT is ever inserted into the candi
 import argparse
 import copy
 import math
+import os
+import time
 import numpy as np
 import rasterio
 import shapely
@@ -147,7 +149,56 @@ def frame_candidates(full_ref, item, t, c, footprint, window_m, max_blocks=None)
                       'center_map': list(poly.centroid.coords[0]), 'training_gt_inserted': False})
     return frame, cands, polys
 
-def prepare(c, limit=None):
+_W = {}
+
+def _init_worker(c, geo, regions, assignments, split_mode):
+    """Per-process state (rasters, references, CRS transforms); used for workers=1 too."""
+    _close_worker()
+    satellite = GeoRaster(path(geo['satellite']), geo['authority']); ground = Ground(geo)
+    ref = open_reference(c, float(c['inference']['reference']['window_m']))
+    working = CRS.from_user_input(ref.forward.target_crs)
+    tr = None if working.equals(satellite.crs, ignore_axis_order=True) else Transformer.from_crs(satellite.crs, working, always_xy=True)
+    if tr: regions = [(s, transform_geometry(tr.transform, p)) for s, p in regions]
+    _W.update(c=c, geo=geo, satellite=satellite, ground=ground, ref=ref, tr=tr, regions=regions,
+              assignments=assignments, split_mode=split_mode)
+
+def _close_worker():
+    for k in ('satellite', 'ground', 'ref'):
+        if _W.get(k) is not None: _W[k].close()
+    _W.clear()
+
+def _process_task(task):
+    """One frame -> ('ok', group) or ('fail', failure). Exceptions never escape (one bad frame never stops prepare)."""
+    item, known = task; c = _W['c']; ref = _W['ref']; tr = _W['tr']
+    try:
+        _, box = query_image(item['image'], c['preprocess'])
+        record = item['record']; R = camera_rotation(record, c['pose'])
+        K = intrinsics(item['width'], item['height'], record, c['preprocess']['intrinsics_override'])
+        footprint, center = project_footprint(record, R, K, box, _W['geo'], _W['ground'], _W['satellite'])
+        if tr:
+            footprint = transform_geometry(tr.transform, footprint); center = tr.transform(*center)
+        t, window, max_blocks = search_prior(item, known or 'val', c, ref)
+        frame, cs, polys = frame_candidates(ref, item, t, c, footprint, window, max_blocks)
+        search = shapely.union_all(polys+[footprint])
+        split = (assign_split(search, _W['regions'], c['split']['buffer_m']) if _W['split_mode'] == 'geographic'
+                 else _W['assignments'][item['sequence']])
+        if split == 'train' and known is None:   # geographic mode: split known only now
+            t, window, max_blocks = search_prior(item, 'train', c, ref)
+            frame, cs, polys = frame_candidates(ref, item, t, c, footprint, window, max_blocks)
+            search = shapely.union_all(polys+[footprint])
+        grid_size = len(cs); train_negatives = c['candidates'].get('train_negatives')
+        if split == 'train' and train_negatives:
+            cs = subsample_train(cs, list(center), int(train_negatives), c['seed'], item['id'])
+        return 'ok', {**item, 'split': split, 'protocol': 'scc_inference', 'is_slant': c['data']['groups'][item['group']]['isSlant'],
+                      'telemetry': t, 'window_m': frame['window_m'], 'prior_source': 'gt_offset', 'side_px': frame['side_px'], 'side_m': frame['side_m'],
+                      'grid_size': grid_size, 'yaw_deg': frame['yaw'], 'elevation_deg': frame['elevation'], 'agl_m': frame['agl'],
+                      'rotation': R.tolist(), 'optical_ned': R[:, 2].tolist(), 'K': K.tolist(), 'crop_box': list(box),
+                      'query_footprint': mapping(footprint), 'ground_center_map': [float(v) for v in center],
+                      'search_footprint': mapping(search), 'candidates': cs}
+    except Exception as e:
+        return 'fail', {'id': item['id'], 'reason': str(e), 'image': item['image']}
+
+def prepare(c, limit=None, workers=1):
     require_real_ready(c)
     if c['preprocess'].get('distortion') is not None:
         raise ValueError('Distortion correction not enabled; supply rectified imagery')
@@ -167,56 +218,37 @@ def prepare(c, limit=None):
     else:
         raise ValueError('split.mode must be geographic or sequence')
     cc = c['candidates']; eval_window = float(c['inference']['reference']['window_m'])
-    train_negatives = cc.get('train_negatives')
     strides = {'train': int(cc.get('train_query_stride') or 1), 'val': int(cc.get('eval_query_stride') or 1),
                'test': int(cc.get('eval_query_stride') or 1)}
     intensity = satellite_intensity_check(reference_config(c, eval_window))
     geo = copy.deepcopy(c['geo']); geo['dsm'] = str(path(geo['dsm'])) if geo['dsm'] else None
-    satellite = GeoRaster(path(geo['satellite']), geo['authority']); ground = Ground(geo)
-    ref = open_reference(c, eval_window)
-    working = CRS.from_user_input(ref.forward.target_crs)
-    if working.equals(satellite.crs, ignore_axis_order=True): to_working = None
-    else:
-        tr = Transformer.from_crs(satellite.crs, working, always_xy=True)
-        to_working = lambda geom: transform_geometry(tr.transform, geom)
-    if to_working: regions = [(s, to_working(p)) for s, p in regions]
-    groups, failures, stride_position = [], [], {}
     pairs = inspection['pairs'][:limit] if limit else inspection['pairs']
-    try:
-        for item in pairs:
-            known = assignments.get(item['sequence']) if split_mode == 'sequence' else None
-            if known and strides[known] > 1:   # consecutive video frames are near duplicates
-                key = (item['group'], item['sequence']); k = stride_position.get(key, 0); stride_position[key] = k+1
-                if k % strides[known]: continue
-            try:
-                _, box = query_image(item['image'], c['preprocess'])
-                record = item['record']; R = camera_rotation(record, c['pose'])
-                K = intrinsics(item['width'], item['height'], record, c['preprocess']['intrinsics_override'])
-                footprint, center = project_footprint(record, R, K, box, geo, ground, satellite)
-                if to_working:
-                    footprint = to_working(footprint); center = tr.transform(*center)
-                t, window, max_blocks = search_prior(item, known or 'val', c, ref)
-                frame, cs, polys = frame_candidates(ref, item, t, c, footprint, window, max_blocks)
-                search = shapely.union_all(polys+[footprint])
-                split = (assign_split(search, regions, c['split']['buffer_m']) if split_mode == 'geographic'
-                         else assignments[item['sequence']])
-                if split == 'train' and known is None:   # geographic mode: split known only now
-                    t, window, max_blocks = search_prior(item, 'train', c, ref)
-                    frame, cs, polys = frame_candidates(ref, item, t, c, footprint, window, max_blocks)
-                    search = shapely.union_all(polys+[footprint])
-                grid_size = len(cs)
-                if split == 'train' and train_negatives:
-                    cs = subsample_train(cs, list(center), int(train_negatives), c['seed'], item['id'])
-                groups.append({**item, 'split': split, 'protocol': 'scc_inference', 'is_slant': c['data']['groups'][item['group']]['isSlant'],
-                               'telemetry': t, 'window_m': frame['window_m'], 'prior_source': 'gt_offset', 'side_px': frame['side_px'], 'side_m': frame['side_m'],
-                               'grid_size': grid_size, 'yaw_deg': frame['yaw'], 'elevation_deg': frame['elevation'], 'agl_m': frame['agl'],
-                               'rotation': R.tolist(), 'optical_ned': R[:, 2].tolist(), 'K': K.tolist(), 'crop_box': list(box),
-                               'query_footprint': mapping(footprint), 'ground_center_map': list(center),
-                               'search_footprint': mapping(search), 'candidates': cs})
-            except Exception as e:
-                failures.append({'id': item['id'], 'reason': str(e), 'image': item['image']})
-    finally:
-        satellite.close(); ground.close(); ref.close()
+    tasks, stride_position = [], {}
+    for item in pairs:
+        known = assignments.get(item['sequence']) if split_mode == 'sequence' else None
+        if known and strides[known] > 1:   # consecutive video frames are near duplicates
+            key = (item['group'], item['sequence']); k = stride_position.get(key, 0); stride_position[key] = k+1
+            if k % strides[known]: continue
+        tasks.append((item, known))
+    groups, failures = [], []
+    workers = max(1, min(int(workers or 1), len(tasks)))
+    print(f'[prepare] {len(tasks)} frames to process ({len(pairs)} matched; strides {strides}); workers={workers}', flush=True)
+    start = time.time(); every = max(1, min(50, len(tasks)//20 or 1))
+    def collect(results):
+        for n, (kind, value) in enumerate(results, 1):
+            (groups if kind == 'ok' else failures).append(value)
+            if n % every == 0 or n == len(tasks):
+                rate = (time.time()-start)/n
+                print(f'[prepare] {n}/{len(tasks)} frames, {rate:.2f} s/frame, ETA {rate*(len(tasks)-n)/60:.1f} min, '
+                      f'failures {len(failures)}', flush=True)
+    if workers > 1:
+        from concurrent.futures import ProcessPoolExecutor
+        with ProcessPoolExecutor(workers, initializer=_init_worker, initargs=(c, geo, regions, assignments, split_mode)) as ex:
+            collect(ex.map(_process_task, tasks, chunksize=4))
+    else:
+        _init_worker(c, geo, regions, assignments, split_mode)
+        try: collect(map(_process_task, tasks))
+        finally: _close_worker()
     if split_mode == 'geographic' and max(strides.values()) > 1:
         thinned, position = [], {}
         for g in groups:
@@ -263,5 +295,7 @@ def prepare(c, limit=None):
 
 if __name__ == '__main__':
     p = argparse.ArgumentParser(); p.add_argument('--config', default='configs/train.yaml'); p.add_argument('--limit', type=int)
-    a = p.parse_args(); m = prepare(config(a.config), a.limit)
+    p.add_argument('--workers', type=int, default=0, help='parallel processes; 0 = min(8, CPU cores - 1)')
+    a = p.parse_args(); workers = a.workers or max(1, min(8, (os.cpu_count() or 2) - 1))
+    m = prepare(config(a.config), a.limit, workers)
     print(f"Prepared {len(m['groups'])} legal queries; {len(m['failures'])} failures")

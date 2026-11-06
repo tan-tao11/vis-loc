@@ -78,3 +78,11 @@ def test_small_gpu_is_refused(monkeypatch):
     common.require_usable_device('cuda:0'); common.require_usable_device('cpu')
     with pytest.raises(RuntimeError, match="P400.*cuda:0', 'cuda:2"): common.require_usable_device('cuda:1')
     with pytest.raises(RuntimeError, match='only 3'): common.require_usable_device('cuda:5')
+
+
+def test_parallel_prepare_matches_serial(tmp_path):
+    from synthetic import make_fixture
+    c1 = config(make_fixture(tmp_path/'a')); c1['output'] = str(tmp_path/'r1')
+    c2 = config(make_fixture(tmp_path/'a')); c2['output'] = str(tmp_path/'r2')
+    m1 = prepare(c1, workers=1); m2 = prepare(c2, workers=2)
+    assert m1['groups'] == m2['groups'] and m1['failures'] == m2['failures']

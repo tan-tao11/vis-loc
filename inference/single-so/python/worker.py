@@ -84,7 +84,7 @@ def main():
                 backend.end_frame(True)
                 send_reply(sock, "OK " + " ".join(format(float(v), ".17g") for v in result))
             except Exception as exc:
-                traceback.print_exc()
+                if type(exc).__name__ != 'NotReported': traceback.print_exc()   # deliberate 0, not an error
                 backend.end_frame(False,str(exc))
                 send_reply(sock, f"FAIL {exc}")
 

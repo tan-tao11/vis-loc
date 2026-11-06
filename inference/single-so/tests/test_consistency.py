@@ -129,3 +129,29 @@ class SCCLocalizeCheckTests(unittest.TestCase):
         wrong = inv.transform(x0 + 2500., y0) + (1500., 200)
         b, _ = self.make([wrong, wrong], fallback=False)
         with self.assertRaises(RuntimeError): b.localize({'number': 1, 'isEO': 0}, None)
+
+
+class ReportSuccessTests(unittest.TestCase):
+    def test_unreported_source_raises_not_reported(self):
+        from backends import BaseBackend, NotReported
+        from prior_tracker import PriorTracker
+        from pyproj import Transformer
+        b = BaseBackend.__new__(BaseBackend)
+        class Ref:
+            forward = Transformer.from_crs('EPSG:4326', 'EPSG:32645', always_xy=True)
+            inverse = Transformer.from_crs('EPSG:32645', 'EPSG:4326', always_xy=True)
+        b.full_ref = Ref(); b.tuning = {'profile_timing': False}; b.config = {}; b.mode = 0
+        b.section = {'report_success': ['fix', 'unconfirmed_fix', 'predicted']}
+        def localize(request, image):
+            x, y = Ref.forward.transform(87., 42.); b.tracker.predict(request['number'], x, y, 1000.)
+            b.last_source = 'retrieval'; return 87.001, 42.001, 1000., 0
+        b.localize = localize
+        b.tracker = PriorTracker({'max_window_m': 2000., 'offset_model': True}); b.begin_frame({'number': 3})
+        with self.assertRaises(NotReported): b.localize_tracked({'number': 3}, None)
+        self.assertFalse(b.trace['reported']); self.assertEqual(b.trace['output_source'], 'retrieval')
+        # no tracker: a PnP fix is reported, a retrieval fallback is not
+        b.tracker = None; b.begin_frame({'number': 4})
+        b.localize = lambda request, image: (setattr(b, 'last_fix', (87., 42., 300)), (87., 42., 1000., 1))[1]
+        self.assertEqual(b.localize_tracked({'number': 4}, None), (87., 42., 1000., 1))
+        b.begin_frame({'number': 5}); b.localize = lambda r, i: (setattr(b, 'last_source', 'retrieval'), (87., 42., 1000., 0))[1]
+        with self.assertRaises(NotReported): b.localize_tracked({'number': 5}, None)

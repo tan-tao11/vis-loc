@@ -21,6 +21,14 @@ from prior_tracker import PriorTracker
 from oblique import view_centre, rectify_query
 import consistency
 
+# Output sources (see localize_tracked) reported as a successful localization; others make stepVNavigator return 0.
+REPORT_ALL = ('fix', 'unconfirmed_fix', 'predicted', 'retrieval', 'search_centre')
+
+
+class NotReported(RuntimeError):
+    """The frame has a position but is configured to be reported as not localized."""
+
+
 TELEMETRY_KEYS = ("lon", "lat", "altitude", "drone_yaw", "drone_pitch", "drone_roll",
                   "sensor_yaw", "sensor_pitch", "sensor_roll", "inns_yaw", "inns_pitch",
                   "inns_roll", "hfov", "vfov", "ccd_size")
@@ -361,6 +369,13 @@ class BaseBackend:
                 with p.open('a') as f:f.write(text+'\n')
             except OSError as exc:print(f'[NAV_TIMING] cannot write log: {exc}',file=sys.stderr)
 
+    def report_success(self, source):
+        """Raise NotReported if this output source is configured as a failed frame (stepVNavigator returns 0)."""
+        allowed = getattr(self, 'section', {}).get('report_success', REPORT_ALL)
+        self.trace.update(output_source=source, reported=source in allowed)
+        if source not in allowed:
+            raise NotReported('frame not reported as localized: source=%s' % source)
+
     def localize_tracked(self, request, image):
         """localize() plus prior tracking: accept/reject the fix and choose what to report.
 
@@ -369,7 +384,9 @@ class BaseBackend:
         """
         tracker=getattr(self,'tracker',None)
         if tracker is None:
-            return self.localize(request, image)
+            result=self.localize(request, image)
+            self.report_success('retrieval' if getattr(self,'last_source',None)=='retrieval' else 'fix')
+            return result
         try:
             result=self.localize(request, image); error=None
         except Exception as exc:
@@ -394,7 +411,9 @@ class BaseBackend:
             out=(lon,lat,float(tracker.last['altitude'] if alt is None else alt),0)
         self.trace.update(prior_fix_accepted=accepted,output_source=source,
                           localize_error=None if error is None else str(error))
-        print('[PRIOR_OUT] frame=%s source=%s accepted=%s mode=%s'%(number,source,accepted,tracker.last['mode']),flush=True)
+        allowed=getattr(self,'section',{}).get('report_success',REPORT_ALL)
+        print('[PRIOR_OUT] frame=%s source=%s accepted=%s mode=%s reported=%d'%(number,source,accepted,tracker.last['mode'],source in allowed),flush=True)
+        self.report_success(source)
         return out
 
     def candidate_finished(self, xy, count, reprojection=None):

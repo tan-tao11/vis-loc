@@ -49,6 +49,10 @@ infrared:
   # PnP 结果须与其检索块一致，否则丢弃；都不一致时输出检索块（前几名加权）换算的位置，置信度 0，不用于跟踪。
   # 检索位置误差约 0.13 x AGL，AGL 高于 max_fallback_agl 时不回退。
   consistency: {enabled: true, block_ratio: 0.75, altitude_m: 300, retrieval_fallback: true, max_fallback_agl: 1200}
+  # 哪些输出算“定位成功”（stepVNavigator 返回 1）；其余帧返回 0（只影响成功率，不计入准确率）。
+  # 可选：fix（已接受的定位）、unconfirmed_fix（捕获前、未确认的定位）、predicted（跟踪预测）、
+  #       retrieval（检索位置回退）、search_centre（搜索中心）。不写 = 全部算成功（原行为）。
+  report_success: [fix, unconfirmed_fix, predicted]
   self_eval: {enabled: false, min_inliers: 30, max_reprojection_px: 4}
 # 无profile时使用reference.window_m；有profile时其search_window_m覆盖读取范围。
 # 600m例子不适用于大先验误差/大斜视足迹；须据日志核对覆盖与内存。

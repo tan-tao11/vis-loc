@@ -19,6 +19,7 @@ from pyproj import CRS, Transformer
 from tuning import read_config, merge, validate_tuning, CVProxy, configure_matcher, match_pair, good_enough
 from prior_tracker import PriorTracker
 from oblique import view_centre, rectify_query
+import consistency
 
 TELEMETRY_KEYS = ("lon", "lat", "altitude", "drone_yaw", "drone_pitch", "drone_roll",
                   "sensor_yaw", "sensor_pitch", "sensor_roll", "inns_yaw", "inns_pitch",
@@ -310,6 +311,7 @@ class BaseBackend:
         # Large independent per-frame prior errors: smooth over the sequence, then track accepted fixes.
         tracking = self.section.get('prior_tracking', {})
         self.tracker = PriorTracker(tracking) if tracking.get('enabled', False) and self.full_ref.window_m > 0 else None
+        self.check = consistency.settings(self.section.get('consistency'))
         self.last_fix = None
         self.camera = self.section.get("camera", {})
         self.device = config.get("device", "cuda")
@@ -336,7 +338,7 @@ class BaseBackend:
         self.trace=dict(number=request['number'],imgType=self.mode,profile=self.config.get('active_profile','legacy'),
                         dense_match_s=0.,pose_s=0.,retrieval_s=0.,prepare_s=0.,candidate_pipeline_s=0.,
                         candidates_attempted=0,candidates=[],fallback_used=False)
-        self.last_fix=None
+        self.last_fix=None; self.last_source=None
 
     def end_frame(self, success, error=None):
         self.trace.update(success=success,error=error,total_s=time.perf_counter()-self.frame_start)
@@ -377,12 +379,14 @@ class BaseBackend:
             if error is not None: raise error           # failed before this frame's prediction
             return result
         x=y=None; accepted=False
-        if result is not None and getattr(self,'last_fix',None) is not None:
+        if result is not None:
             x,y=self.full_ref.forward.transform(result[0],result[1],errcheck=True)
-            accepted=tracker.update(number,x,y,self.last_fix[2])
+            if getattr(self,'last_fix',None) is not None:   # only checked PnP fixes update the tracker
+                accepted=tracker.update(number,x,y,self.last_fix[2])
         ox,oy,source=tracker.output(x,y,accepted)
+        if source=='unconfirmed_fix' and getattr(self,'last_source',None)=='retrieval': source='retrieval'
         if accepted: self.last_output_altitude=float(result[2])
-        if source in ('fix','unconfirmed_fix'):
+        if source in ('fix','unconfirmed_fix','retrieval'):
             out=result
         else:
             lon,lat=self.full_ref.inverse.transform(ox,oy,errcheck=True)
@@ -734,8 +738,10 @@ class SCCBackend(BaseBackend):
                 clon, clat = self.ref.inverse.transform(self.ref.x0 + ux*res, self.ref.y0 - uy*res)
                 print(f'[RETRIEVAL_TOP] frame={request["number"]} rank={k+1} lon_lat=({clon:.8f},{clat:.8f}) '
                       f'score={float(np.ravel(scores)[k]):.4f} from_prior_m={math.hypot(self.ref.x0+ux*res-px, self.ref.y0-uy*res-py):.1f}', flush=True)
-            blh,counts,errors,retrieval,uncertainty=[],[],[],[],[]
+            blh,counts,errors,retrieval,uncertainty,consistent=[],[],[],[],[],[]
             one=lambda v,i:[v[i]] if isinstance(v,(list,tuple,np.ndarray)) else v
+            centres=[consistency.block_centre(rotation,rows[k],cols[k],one(heights,k)[0],one(widths,k)[0],self.ref.x0,self.ref.y0,res)
+                     for k in range(len(rows))] if self.check['enabled'] else []
             for rank in range(min(len(rows),self.tuning['max_candidates'])):
                 if self.trace['candidates_attempted']>=self.tuning['initial_candidates']:self.trace['fallback_used']=True
                 self.last_geometry={};self.trace['candidates_attempted']+=1
@@ -748,11 +754,27 @@ class SCCBackend(BaseBackend):
                 blh.extend(pp);counts.extend(nn);errors.extend(ee);retrieval.extend(rr);uncertainty.extend(uu)
                 point=pp[0] if pp else {}
                 xy=list(self.ref.forward.transform(point['L'],point['B'])) if point.get('L') is not None and point.get('B') is not None else None
-                if self.candidate_finished(xy,nn[0] if nn else 0,ee[0] if ee else None):break
+                ok=True
+                if self.check['enabled'] and xy is not None and point.get('H') is not None and np.isfinite(point['H']):
+                    ok,why,dist=consistency.check_fix(xy[0],xy[1],point['H'],t['altitude'],centres[rank],one(widths,rank)[0]*res,
+                                                      agl,yaw,elevation,self.check)
+                    print('[PNP_CHECK] frame=%s rank=%d inliers=%d %s dist=%.0fm dz=%.0fm'%(request["number"],rank+1,nn[0] if nn else 0,
+                          why,dist,point['H']-t['altitude']),flush=True)
+                consistent.extend([ok]*len(pp))
+                if self.candidate_finished(xy,nn[0] if nn else 0,ee[0] if ee else None) and ok:break
         valid = [i for i, p in enumerate(blh) if counts[i] >= self.tuning['min_result_inliers'] and
-                 all(p.get(k) is not None and np.isfinite(p[k]) for k in ("L", "B", "H"))]
+                 all(p.get(k) is not None and np.isfinite(p[k]) for k in ("L", "B", "H")) and
+                 (not self.check['enabled'] or consistent[i])]
         if not valid:
-            raise RuntimeError("SCC-Loc: no valid PnP solution")
+            fallback=None
+            if self.check['enabled'] and self.check['retrieval_fallback'] and agl<=self.check['max_fallback_agl']:
+                fallback=consistency.retrieval_position(centres,list(np.ravel(scores)),one(widths,0)[0]*res,agl,yaw,elevation,self.check)
+            if fallback is None:
+                raise RuntimeError("SCC-Loc: no valid PnP solution")
+            lon,lat=self.ref.inverse.transform(*fallback)
+            self.last_source='retrieval'
+            print('[FALLBACK] frame=%s retrieval position (no consistent PnP fix)'%request["number"],flush=True)
+            return lon, lat, t["altitude"], 0
         take = lambda values: [values[i] for i in valid]
         index = int(self.api.select_best_index_fusion(take(counts), take(errors), take(retrieval), take(uncertainty), take(blh)))
         best = valid[index]

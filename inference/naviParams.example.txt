@@ -50,6 +50,9 @@ infrared:
     oblique: true                      # 视场中心窗口 + 查询图俯视矫正 + 候选块可见区域遮挡（single-so/python/oblique.py）
     query_crop_scale: 0.5              # = training preprocess.query_crop_scale；块边长按短边×0.5 的中心区域估算
   tuning: {min_result_inliers: 15}
+  # PnP 结果须与其检索块一致（视场地面点在块内、高度与先验相差 <= altitude_m），否则丢弃。
+  # 倾斜块约 3 km，检索中心换算的位置误差约 1 km，所以不回退到检索位置（retrieval_fallback: false）。
+  consistency: {enabled: true, block_ratio: 0.75, altitude_m: 300, retrieval_fallback: false}
   self_eval: {enabled: false, min_inliers: 30, max_reprojection_px: 4}
 # 无profile时使用reference.window_m；有profile时其search_window_m覆盖读取范围。
 # 600m例子不适用于大先验误差/大斜视足迹；须据日志核对覆盖与内存。

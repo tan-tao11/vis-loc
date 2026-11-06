@@ -52,6 +52,8 @@ def validate_devices(devices, diagnostic=False):
         if device.type not in ('cuda','cpu'): raise ValueError('Unsupported device')
         if device.type=='cuda' and (device.index is None or device.index>=torch.cuda.device_count()):
             raise ValueError(f'Requested {value}; only {torch.cuda.device_count()} visible CUDA device(s)')
+        if device.type=='cuda':
+            from common import require_usable_device; require_usable_device(value)
     if not dist.is_available() or not dist.is_gloo_available(): raise RuntimeError('This PyTorch installation lacks Gloo')
 
 

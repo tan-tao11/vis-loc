@@ -100,3 +100,26 @@ def verify_manifest(m):
     if digest(m['config']) != m['fingerprint']['config']:
         raise ValueError('Manifest configuration mismatch')
     verify_inputs(m['fingerprint'])
+
+
+MIN_GPU_MEMORY_GB = 6.0   # excludes small display GPUs (e.g. Quadro P400, 2 GB) from DINO-L work
+
+def usable_cuda_devices(min_memory_gb=MIN_GPU_MEMORY_GB):
+    """CUDA indices (torch numbering) with at least min_memory_gb of memory."""
+    import torch
+    if not torch.cuda.is_available(): return []
+    return [i for i in range(torch.cuda.device_count())
+            if torch.cuda.get_device_properties(i).total_memory >= min_memory_gb*2**30]
+
+def require_usable_device(device, min_memory_gb=MIN_GPU_MEMORY_GB):
+    """Refuse a CUDA device that is too small (fails early with the usable indices)."""
+    import torch
+    d = torch.device(device)
+    if d.type != 'cuda': return
+    if not torch.cuda.is_available(): raise RuntimeError(f'{device} requested but CUDA is not available')
+    index = torch.cuda.current_device() if d.index is None else d.index
+    if index >= torch.cuda.device_count(): raise RuntimeError(f'{device}: only {torch.cuda.device_count()} CUDA device(s)')
+    props = torch.cuda.get_device_properties(index)
+    if props.total_memory < min_memory_gb*2**30:
+        raise RuntimeError(f'{device} is {props.name} ({props.total_memory/2**30:.1f} GB) - too small for training; '
+                           f'use one of {["cuda:%d" % i for i in usable_cuda_devices(min_memory_gb)]}')

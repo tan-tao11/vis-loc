@@ -84,6 +84,7 @@ candidates:
   altitude_error_m: 100           # 高度=真值±均匀误差，块尺寸随之像推理一样有偏差
   train_negatives: null           # 训练集每查询保留全部正例+N个负例；null=全部
   eval_query_stride: 1            # 验证/测试每条序列每k帧取1帧
+  train_query_stride: 1           # 训练集每条序列每k帧取1帧（相邻视频帧几乎重复）
 labels:
   # 推理网格（块=1.2×足迹，步长50%）最坏错位时最佳块只覆盖约64%足迹，故正样本阈值取0.6
   positive_coverage: 0.6

@@ -167,7 +167,9 @@ def prepare(c, limit=None):
     else:
         raise ValueError('split.mode must be geographic or sequence')
     cc = c['candidates']; eval_window = float(c['inference']['reference']['window_m'])
-    train_negatives = cc.get('train_negatives'); stride = int(cc.get('eval_query_stride') or 1)
+    train_negatives = cc.get('train_negatives')
+    strides = {'train': int(cc.get('train_query_stride') or 1), 'val': int(cc.get('eval_query_stride') or 1),
+               'test': int(cc.get('eval_query_stride') or 1)}
     intensity = satellite_intensity_check(reference_config(c, eval_window))
     geo = copy.deepcopy(c['geo']); geo['dsm'] = str(path(geo['dsm'])) if geo['dsm'] else None
     satellite = GeoRaster(path(geo['satellite']), geo['authority']); ground = Ground(geo)
@@ -183,9 +185,9 @@ def prepare(c, limit=None):
     try:
         for item in pairs:
             known = assignments.get(item['sequence']) if split_mode == 'sequence' else None
-            if known in ('val', 'test') and stride > 1:
+            if known and strides[known] > 1:   # consecutive video frames are near duplicates
                 key = (item['group'], item['sequence']); k = stride_position.get(key, 0); stride_position[key] = k+1
-                if k % stride: continue
+                if k % strides[known]: continue
             try:
                 _, box = query_image(item['image'], c['preprocess'])
                 record = item['record']; R = camera_rotation(record, c['pose'])
@@ -215,12 +217,11 @@ def prepare(c, limit=None):
                 failures.append({'id': item['id'], 'reason': str(e), 'image': item['image']})
     finally:
         satellite.close(); ground.close(); ref.close()
-    if split_mode == 'geographic' and stride > 1:
+    if split_mode == 'geographic' and max(strides.values()) > 1:
         thinned, position = [], {}
         for g in groups:
-            if g['split'] in ('val', 'test'):
-                key = (g['group'], g['sequence']); k = position.get(key, 0); position[key] = k+1
-                if k % stride: continue
+            key = (g['group'], g['sequence']); k = position.get(key, 0); position[key] = k+1
+            if k % strides[g['split']]: continue
             thinned.append(g)
         groups = thinned
     leakage = split_audit(groups, c['split']['buffer_m'], c['split']['sequence_exclusive'])

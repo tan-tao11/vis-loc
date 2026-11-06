@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 import numpy as np
 import torch
-from common import config, path, read_json, write_json, digest, verify_manifest, sha256, ROOT
+from common import config, path, read_json, write_json, digest, verify_manifest, sha256, ROOT, require_usable_device
 from cache import group_cache_name
 from preprocess import query_image, tensor_image
 from scc_inference import TileSource, tile_tensor
@@ -16,6 +16,7 @@ def extraction_identity(m, c, identity):
                    'pipeline_version': 1, 'torch': str(torch.__version__), 'amp': c['extract']['amp']})
 
 def extract(c, manifest, cache_dir, device='cuda:0', shard_index=0, num_shards=1):
+    require_usable_device(device)
     m = read_json(manifest); verify_manifest(m)
     if digest(c) != m['fingerprint']['config']: raise ValueError('Configuration changed after preparation')
     if not 0 <= shard_index < num_shards: raise ValueError('Invalid shard partition')

@@ -40,7 +40,7 @@ inference:
 
 candidates:
   window_mode: meters           # = 推理 prior_tracking.window_mode（meters：固定米数；blocks：固定块数）
-  train_window_m: 4000          # meters：训练集搜索窗边长（越大负例越多，也越慢）
+  train_window_m: 2000          # meters：训练集搜索窗边长（负例数已由 train_negatives 封顶；越大读图越慢）
   eval_window_m: 4000           # meters：验证/测试 = 推理 prior_tracking.max_window_m
   train_max_blocks: 100         # blocks：训练集每帧块数
   eval_max_blocks: 100          # blocks：验证/测试 = 推理 prior_tracking.max_blocks
@@ -48,6 +48,7 @@ candidates:
   altitude_error_m: 100         # 高度 = 真值 ±100 m，块尺寸随之偏差
   train_negatives: 128          # 训练集每查询：全部正例 + 128 个负例（一半最近、一半随机）
   eval_query_stride: 5          # 验证/测试每条序列每 5 帧取 1 帧
+  train_query_stride: 3         # 训练集每 3 帧取 1 帧：首轮快速出结果；全量训练改为 1
 
 split:
   mode: sequence
@@ -57,6 +58,9 @@ split:
     sequence2: train
     sequence3: val
     sequence4: test
+
+extract:
+  batch_size: 32                # A4000 16 GB；显存不足会自动减半
 
 model:
   checkpoint: 'D:/SCC_Loc/weights/dinov2_vitl14_pretrain.pth'

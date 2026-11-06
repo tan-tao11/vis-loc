@@ -10,7 +10,7 @@ from tests.test_sequence_split import sequence_fixture
 def test_mlp_config_inherits_train_defaults():
     full, lean = config(ROOT/'configs/train.yaml'), config(ROOT/'configs/mlp.yaml')
     assert 'base' not in lean and lean['model']['gem_p'] == full['model']['gem_p']
-    assert lean['labels'] == full['labels'] and lean['extract'] == full['extract']
+    assert lean['labels'] == full['labels'] and lean['extract'] == dict(full['extract'], batch_size=32)
     assert lean['split']['sequence_splits'] and lean['candidates']['train_negatives'] == 128
     assert lean['inference']['reference']['georeference'] == 'auto' and lean['inference']['camera']['reference_window_scale'] == 1.2
     assert not any(lean[s][k] for s, k in [('data', 'mapping_confirmed'), ('pose', 'calibration_confirmed'),
@@ -63,3 +63,18 @@ def test_mlp_config_is_vertical_only_and_nadir_aligned():
     assert set(c['data']['groups']) == {'DV', 'NV'} and all(g['isSlant'] == 0 for g in c['data']['groups'].values())
     t = dict(inns_yaw=306.5, inns_pitch=0., inns_roll=0., sensor_yaw=0.2, sensor_pitch=-0.7, sensor_roll=0.8)
     assert optical_pose(t, False, camera_for(c, 'NV')) == (306.5, -90.0)
+
+
+def test_small_gpu_is_refused(monkeypatch):
+    import torch
+    from types import SimpleNamespace
+    import common
+    gpus = [SimpleNamespace(name='NVIDIA RTX A4000', total_memory=16*2**30), SimpleNamespace(name='Quadro P400', total_memory=2*2**30),
+            SimpleNamespace(name='NVIDIA RTX A4000', total_memory=16*2**30)]
+    monkeypatch.setattr(torch.cuda, 'is_available', lambda: True)
+    monkeypatch.setattr(torch.cuda, 'device_count', lambda: len(gpus))
+    monkeypatch.setattr(torch.cuda, 'get_device_properties', lambda i: gpus[i])
+    assert common.usable_cuda_devices() == [0, 2]
+    common.require_usable_device('cuda:0'); common.require_usable_device('cpu')
+    with pytest.raises(RuntimeError, match="P400.*cuda:0', 'cuda:2"): common.require_usable_device('cuda:1')
+    with pytest.raises(RuntimeError, match='only 3'): common.require_usable_device('cuda:5')

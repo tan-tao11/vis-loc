@@ -31,6 +31,7 @@ def mine_hard_negatives(heads, groups, arrays, device, count):
 
 def train(c, manifest, cache_dir, output, device=None):
     seed_all(c['seed']); device = device or c['train']['device']; tc = c['train']
+    from common import require_usable_device; require_usable_device(device)
     m, arrays, index = load_cache(manifest, cache_dir)
     if digest(c) != m['fingerprint']['config']: raise ValueError('Config/cache mismatch; create new run')
     if tc['loss'] != 'grouped_multi_positive': raise ValueError('Only one-direction grouped loss implemented')

@@ -36,8 +36,10 @@ def parse_records(filename, fmt='auto'):
     if not useful:
         raise ValueError(f'{p}: empty telemetry')
     first = useful[0][1]
+    # "key   value" per line (one or more spaces / tabs, no ':' or '=')
+    ws_kv = all(re.fullmatch(r'[A-Za-z_]\w*\s+[^\s,;{}:=]+', s) for _, s in useful)
     if fmt == 'auto':
-        fmt = 'csv' if (',' in first or '\t' in first) and 'number' in first and '=' not in first and ':' not in first else 'kv'
+        fmt = 'kv' if ws_kv else 'csv' if (',' in first or '\t' in first) and 'number' in first and '=' not in first and ':' not in first else 'kv'
     records = []
     if fmt == 'csv':
         sep = '\t' if '\t' in first else ','
@@ -58,6 +60,8 @@ def parse_records(filename, fmt='auto'):
                     records.append(r); r = {}
                 continue
             pairs = re.findall(r'([A-Za-z_]\w*)\s*[:=]\s*([^,;\s{}]+)', s)
+            if not pairs and re.fullmatch(r'[A-Za-z_]\w*\s+[^\s,;{}:=]+', s):
+                pairs = [tuple(s.split(None, 1))]
             if not pairs:
                 raise ValueError(f'{p}:{n}: unknown record syntax; configure parser')
             for k, v in pairs:

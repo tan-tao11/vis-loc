@@ -8,7 +8,8 @@ data:
   # auto 只识别明确的 CSV 表头或 key=value 多帧块，无法识别时中止。
   record_format: auto
   mapping_confirmed: false
-  image_regex: '(?P<sequence>sequence[^/]+)/(?P<frame>\d+)\.(?:png|jpg|jpeg|tif|tiff)$'
+  # <序列目录>/<任意前缀><帧号>.jpg，例如 sequence1/xxxx1000.jpg（同名 .txt 为逐图记录）
+  image_regex: '(?P<sequence>[^/]+)/[^/]*?(?P<frame>\d+)\.(?:png|jpg|jpeg|tif|tiff)$'
   # 多帧 TXT 没有 sequence 时必须配置文件到 sequence 的显式映射。
   sequence_by_file: {}
   per_image_txt: false

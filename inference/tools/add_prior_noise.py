@@ -2,6 +2,7 @@
 """Add artificial prior errors to per-image TXT records for inference testing (stdlib only).
 
 Layout:  <src>/day/IR/slant/<sequence>/xxxx1000.jpg + xxxx1000.txt, xxxx1001.jpg + xxxx1001.txt, ...
+TXT formats: 'key   value' (spaces/tabs), 'key=value', 'key: value', or a CSV header row + one record row.
 Only the PRIOR fields droneLongitude / droneLatitude / droneAltitude are changed; *_gt fields are kept
 (and added from the original prior if a file has none, so the truth is never lost). Originals are never
 modified: the whole tree is copied to <dst> (images copied, or hard-linked with --link).
@@ -51,10 +52,13 @@ def read_values(text):
             raise ValueError('CSV TXT must have one header row and one record')
         return dict(zip([k.strip() for k in rows[0]], [v.strip() for v in rows[1]])), ('csv', sep)
     values = {}
-    for k, v in re.findall(r'([A-Za-z_]\w*)\s*[:=]\s*([^,;\s{}]+)', text):
-        values.setdefault(k, v.strip('"\''))
-    sep = ':' if re.search(r'droneLatitude\s*:', text) else '='
-    return values, ('kv', sep)
+    for line in text.splitlines():
+        pairs = re.findall(r'([A-Za-z_]\w*)\s*[:=]\s*([^,;\s{}]+)', line)
+        m = None if pairs else re.fullmatch(r'\s*([A-Za-z_]\w*)\s+([^\s,;{}:=]+)\s*', line)
+        for k, v in pairs or ([m.groups()] if m else []):
+            values.setdefault(k, v.strip('"\''))
+    m = re.search(r'(?m)(?:^|[^\w])droneLatitude(\s*[:=]\s*|[ \t]+)', text)
+    return values, ('kv', m.group(1) if m else '=')   # separator exactly as written: '=', ': ', or the spaces
 
 
 def get(values, names):
@@ -77,7 +81,7 @@ def rewrite(text, style, changes, additions):
         out = io.StringIO(); csv.writer(out, delimiter=sep, lineterminator='\n').writerows(rows)
         return out.getvalue()
     for k, v in changes.items():
-        text, n = re.subn(r'(?<![\w])(' + re.escape(k) + r')(\s*[:=]\s*)([^,;\s{}]+)', lambda m: m.group(1) + m.group(2) + v, text, count=1)
+        text, n = re.subn(r'(?<![\w])(' + re.escape(k) + r')(\s*[:=]\s*|[ \t]+)([^,;\s{}]+)', lambda m: m.group(1) + m.group(2) + v, text, count=1)
         if n != 1:
             raise ValueError('cannot rewrite ' + k)
     if additions:

@@ -4,8 +4,6 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 NAMES={
-    'camp':'weights_0.9446_for_U1652.pth',
-    'convnext':'convnext_base_22k_1k_224.pth',
     'dinov2':'dinov2_vitl14_pretrain.pth',
     'roma':'roma_outdoor.pth',
     'minima_roma':'minima_roma.pth',
@@ -13,14 +11,13 @@ NAMES={
 
 def configure(config,modality):
     root=Path(os.environ['NAV_EMBEDDED_ROOT'])
-    for key,project in [('rgb','AnyVisLoc-Benchmark'),('infrared','SCC-Loc')]:
-        config.setdefault(key,{})['project_root']=str(root/'projects'/project)
-    if modality not in config.get('enabled_modalities',[0,1]):return
+    config.setdefault('infrared',{})['project_root']=str(root/'projects'/'SCC-Loc')
+    if modality!=0:return
     base=Path(config['_config_dir'])
     w=config.get('weights',{})
     weight_root=Path(w.get('root',str(base/'weights')))
     if not weight_root.is_absolute():weight_root=base/weight_root
-    needed=['dinov2','roma','minima_roma'] if modality==0 else ['camp','convnext','dinov2','roma']
+    needed=['dinov2','roma','minima_roma']
     paths={}
     for key in needed:
         path=Path(w.get(key,str(weight_root/NAMES[key])))

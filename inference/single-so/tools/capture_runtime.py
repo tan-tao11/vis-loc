@@ -33,7 +33,7 @@ def project_ignore(folder,names):
 shutil.copytree(SOURCE_HOME/'.venvs/uavloc',stage/'env',symlinks=True,ignore=env_ignore,copy_function=linkcopy)
 for name in ('pyvenv.cfg','.gitignore','CACHEDIR.TAG'):
     (stage/'env'/name).unlink(missing_ok=True)
-for name in ('AnyVisLoc-Benchmark','SCC-Loc'):
+for name in ('SCC-Loc',):
     shutil.copytree(SOURCE_HOME/name,stage/'projects'/name,symlinks=True,ignore=project_ignore,copy_function=linkcopy)
 # All source-home absolute links in the virtual environment must become relative.
 for p in (stage/'env').rglob('*'):

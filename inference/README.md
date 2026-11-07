@@ -4,6 +4,8 @@
 
 已合并参考图旋转、可选近下视对齐分支、简化正方形候选窗口、`reference_window_scale`、关闭 SCC 排序后 SGVA 位移／放大、搜索中心日志，以及可选 matching 调试输出。没有混入此前未采用的查询图旋转实验、矩形足迹／自动地图扩展方案，也没有新接入 MLP 或 LoRA。
 
+**只支持红外（imgType 0，SCC-Loc）**：RGB 的 AnyVisLoc 算法和 `rgb` 配置段已删除，`enabled_modalities` 必须为 `[0]`；RGB 进程启动时直接报告未启用。
+
 ## 倾斜专用版本（2026-11-07，slant 分支）
 
 本源码用于**倾斜（DS/NS）专用 .so**；垂直数据使用另一个 .so。`infrared.camera.oblique: true` 时：
@@ -24,7 +26,6 @@
 | `single-so/python/backends.py` | 字段、K／AGL／姿态、参考旋转、中心日志、算法调用 |
 | `single-so/python/geodata.py`、`tuning.py` | GeoTIFF／TFW／PRJ、地图读取、调参及可选matching诊断 |
 | `projects/SCC-Loc/` | 红外共享DINOv2检索、MINIMA-RoMa及项目内源依赖 |
-| `projects/AnyVisLoc-Benchmark/` | RGB CAMP／RoMa及项目内源依赖 |
 | `naviParams.example.txt` | 去除机器私有路径的配置示例，不是比赛机实测配置 |
 | `single-so/WEIGHTS.json` | 原部署权重的名称、大小和SHA256，不包含权重 |
 | `runtime-requirements.snapshot.txt` | 原ARM64运行时包元数据，不是Windows安装锁文件 |

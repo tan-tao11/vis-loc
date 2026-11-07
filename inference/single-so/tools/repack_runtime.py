@@ -8,9 +8,10 @@ if not stage.is_dir():
     stage.mkdir()
     with tarfile.open(ROOT/'runtime.tar.gz','r:gz') as t:t.extractall(stage)
 for p in (ROOT/'python').glob('*.py'):shutil.copyfile(p,stage/'adapter'/p.name)
-# Keep both algorithm trees synchronized with this repository snapshot.
+# Keep the SCC-Loc tree synchronized with this repository snapshot; drop the removed RGB (AnyVisLoc) tree.
 projects = ROOT.parent / 'projects'
-for project in ('SCC-Loc', 'AnyVisLoc-Benchmark'):
+shutil.rmtree(stage/'projects'/'AnyVisLoc-Benchmark', ignore_errors=True)
+for project in ('SCC-Loc',):
     source = projects / project
     if not source.is_dir():
         raise SystemExit('missing inference project source: ' + str(source))

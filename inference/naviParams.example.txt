@@ -3,28 +3,13 @@ version: 1
 device: cuda
 cpu_threads: 4
 batch_size: 8
-enabled_modalities: [0, 1]
+enabled_modalities: [0]          # 只支持红外（imgType 0）；RGB/AnyVisLoc 已删除
 active_profile: ''
 active_dataset: ''
 weights:
   root: ./weights
 timing_file: logs/timing.jsonl
 debug_matching: false  # 开启保存匹配输入/点/图像，影响耗时和磁盘。
-rgb:
-  project_root: ./projects/AnyVisLoc-Benchmark
-  pose_priori: unknown
-  reference:
-    georeference: auto
-    image: ./maps/scene/satellite.tif
-    dsm: ./maps/scene/dsm.tif
-    height_datum: normal_m
-    window_m: 600
-    image_bands: [1, 1, 1]
-    # image_tfw: ./maps/scene/satellite.tfw
-    # image_prj: ./maps/scene/satellite.prj
-    # 非uint8卫星需填写 image_value_range: [实际下限, 实际上限]
-  camera: {}
-  self_eval: {enabled: false, min_inliers: 30}
 infrared:
   # 倾斜（DS/NS）专用 .so 的红外段；与 training/configs/slant.yaml 的 inference 段逐项一致。
   project_root: ./projects/SCC-Loc

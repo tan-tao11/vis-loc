@@ -45,7 +45,7 @@ def read_config(path):
     config['tuning']=merge(LEGACY,config.get('tuning',{}))
     validate_tuning(config['tuning'])
     config['_config_dir']=str(path.parent)
-    for key in ('rgb','infrared'):
+    for key in ('infrared',):
         camera=config.get(key,{}).get('camera',{})
         if camera.get('frame_agl_file'):
             p=Path(camera['frame_agl_file'])

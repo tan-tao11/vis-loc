@@ -4,27 +4,11 @@ weights:
   root: ./weights
 # 若文件名不同，可逐项指定绝对或相对路径：camp / convnext / dinov2 / roma / minima_roma。
 # 统一配置：修改 active_profile 选择速度/精度档；修改 active_dataset 选择数据。
-# 所有运行参数在 profiles 中；地图/相机在 datasets 或 rgb/infrared 中。
+# 所有运行参数在 profiles 中；地图/相机在 datasets 或 infrared 中（只支持红外）。
 version: 1
 device: cuda
 cpu_threads: 4
 batch_size: 8
-rgb:
-  project_root: ../projects/AnyVisLoc-Benchmark
-  reference:
-    georeference: auto
-    image: ''
-    dsm: ''
-    crs: null
-    origin_xy: null
-    resolution_m: null
-    height_datum: normal_m
-    nodata: null
-  camera: {}
-  pose_priori: unknown
-  self_eval:
-    enabled: false
-    min_inliers: 30
 infrared:
   project_root: ../projects/SCC-Loc
   reference:
@@ -46,7 +30,6 @@ active_profile: desert_fast
 active_dataset: desert
 enabled_modalities:
 - 0
-- 1
 timing_file: logs/timing.jsonl
 profiles:
   desert_fast:
@@ -195,11 +178,10 @@ datasets:
   desert:
     enabled_modalities:
     - 0
-    - 1
     allow_unverified_height_datum: false
 _help:
   active_profile: desert_fast=速度优先起点；desert_accuracy=保留更多细节和候选；baseline=原参数对照
-  active_dataset: dataset1_demo 是城市/乡村红外演示数据，非沙漠验证；部署沙漠数据时选 desert 并填写上方 rgb/infrared
+  active_dataset: dataset1_demo 是城市/乡村红外演示数据，非沙漠验证；部署沙漠数据时选 desert 并填写上方 infrared
     的地图和相机。
   candidate_budget: 先处理 initial_candidates；几何质量和两候选位置一致性不足时，继续到 max_candidates。不会偷偷变更权重。
   coarse_resolution: 必须为14的倍数。降低会加速，但可能损失沙漠弱纹理细节。

@@ -30,14 +30,12 @@ def main():
     p.add_argument("--modality", type=int, choices=[0, 1])
     p.add_argument("--check-config", action="store_true")
     args = p.parse_args()
-    from backends import load_config, Reference, AnyVisBackend, SCCBackend
+    from backends import load_config, Reference, SCCBackend
     import numpy as np
     if args.check_config:
         try:
             config = load_config(args.config)
-            for mode in config.get("enabled_modalities", [0, 1]):
-                key = "rgb" if mode == 1 else "infrared"
-                Reference(config[key]["reference"])
+            Reference(config["infrared"]["reference"])
         except Exception as exc:
             print(f"CONFIG_ERROR: {exc}", file=sys.stderr)
             return 1
@@ -46,15 +44,15 @@ def main():
     if args.fd is None or args.modality is None:
         p.error("--fd and --modality required")
     with socket.socket(fileno=args.fd) as sock:
+        if args.modality != 0:   # RGB (imgType 1) removed: only the infrared worker runs, before any config check
+            send_reply(sock, "DISABLED")
+            return
         try:
             config = load_config(args.config)
-            if args.modality not in config.get("enabled_modalities", [0, 1]):
-                send_reply(sock, "DISABLED")
-                return
             if os.environ.get('NAV_EMBEDDED_ROOT'):
                 from embedded_config import configure
                 configure(config,args.modality)
-            backend = (AnyVisBackend if args.modality == 1 else SCCBackend)(config)
+            backend = SCCBackend(config)
             send_reply(sock, "READY")
         except Exception as exc:
             traceback.print_exc()

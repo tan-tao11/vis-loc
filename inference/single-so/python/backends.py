@@ -47,15 +47,15 @@ def load_config(path):
     config = read_config(path)
     if os.environ.get('NAV_EMBEDDED_ROOT'):
         embedded = Path(os.environ['NAV_EMBEDDED_ROOT'])/'projects'
-        for key, project in [('rgb','AnyVisLoc-Benchmark'),('infrared','SCC-Loc')]:
-            config.setdefault(key,{})['project_root']=str(embedded/project)
+        config.setdefault('infrared',{})['project_root']=str(embedded/'SCC-Loc')
     if config.get("version") != 1:
         raise ValueError("unsupported config version")
-    enabled = config.get("enabled_modalities", [0, 1])
-    if not enabled or len(set(enabled)) != len(enabled) or any(m not in (0, 1) for m in enabled):
-        raise ValueError("enabled_modalities must contain 0 and/or 1")
+    # Infrared (imgType 0, SCC-Loc) only; the RGB / AnyVisLoc path has been removed.
+    enabled = config.get("enabled_modalities", [0])
+    if enabled != [0]:
+        raise ValueError("enabled_modalities must be [0]: only infrared (SCC-Loc) is supported")
     for mode in enabled:
-        key = "rgb" if mode == 1 else "infrared"
+        key = "infrared"
         section = config[key]
         section["project_root"] = str(absolute_path(section["project_root"], path.parent))
         if not Path(section["project_root"]).is_dir():
@@ -305,7 +305,7 @@ class BaseBackend:
     def __init__(self, config, modality):
         self.mode = modality
         self.config = config
-        self.section = config["rgb" if modality == 1 else "infrared"]
+        self.section = config["infrared"]
         self.tuning = merge(config.get('tuning',{}),self.section.get('tuning',{}))
         if not config.get('active_profile'):
             # Existing saved benchmark configs retain their requested candidate count.
@@ -427,7 +427,7 @@ class BaseBackend:
         self.trace.update(prior_fix_accepted=accepted,output_source=source,
                           localize_error=None if error is None else str(error))
         cfg=self.self_eval_cfg()
-        if cfg['enabled']:   # disabled: keep the backend's own value (0 for SCC, AnyVis confidence)
+        if cfg['enabled']:   # disabled: keep the backend's own value (0 for SCC)
             value,failed=self_eval.decide(self.trace.get('self_eval_features'),source,residual,cfg)
             out=tuple(out[:3])+(value,)
         else:
@@ -573,88 +573,6 @@ class BaseBackend:
         if "max_reprojection_px" in policy:
             passed = passed and reprojection is not None and np.isfinite(reprojection) and reprojection <= float(policy["max_reprojection_px"])
         return int(passed)
-
-
-class AnyVisBackend(BaseBackend):
-    def __init__(self, config, modality=1):
-        super().__init__(config, modality)
-        import avl_utils as api
-        self.api = api
-        self.settings["RETRIEVAL_METHODS"] = ["CAMP"]
-        self.opt = SimpleNamespace(device=self.device, pose_priori=self.pose, strategy="Topn_opt", PnP_method="P3P",
-            resize_ratio=self.tuning['resize_ratio'], patch_scale=self.tuning['anyvis_patch_scale'], min_patch_size_m=0.,
-            max_patch_size_m=0., visualize=False, disable_ref_feature_cache=True,
-            pnp_reproj_error=8., pnp_iterations=2000, pnp_confidence=.999)
-        self.methods = api.retrieval_init({"retrieval_method": "CAMP"}, self.settings)
-        self.methods["matching_method"] = "Roma"
-        self.methods = api.matching_init(self.methods, self.opt, self.settings)
-        configure_matcher(self,self.methods['matching_model'])
-        api.cv2=CVProxy(self)
-        def tuned_match(a,b,model,save_path,ransac_name,need_ransac=False,show_matches=False,device=None):
-            left,right,_=match_pair(self,a,b,model,need_ransac,convert_rgb=False)
-            return left,right
-        api.Roma_match=tuned_match
-        estimate=api.estimate_drone_pose_anyvisloc
-        def timed_pose(*args,**kwargs):
-            start=time.perf_counter()
-            try:return estimate(*args,**kwargs)
-            finally:self.trace['pose_s']+=time.perf_counter()-start
-        api.estimate_drone_pose_anyvisloc=timed_pose
-        # Upstream squeeze() makes a singleton gallery score scalar. Duplicate that one
-        # candidate only; its geometry and feature values are unchanged.
-        original = api.compute_block_mid_wo_black
-        def gallery(*args, **kwargs):
-            mids = original(*args, **kwargs)
-            return np.repeat(mids, 2, axis=0) if len(mids) == 1 else mids
-        api.compute_block_mid_wo_black = gallery
-        self.torch.cuda.synchronize()
-
-    def localize(self, request, image):
-        t, image, K, agl, yaw, elevation = self.prepare(request, image)
-        local_x, local_y = self.ref.local_prior(t)
-        data = dict(x=local_x, y=local_y, z=t["altitude"]-self.ref.z0, rel_alt=agl,
-                    yaw=yaw, pitch=90+elevation, roll=0, width=image.shape[1], height=image.shape[0], K=K)
-        if self.pose == "yp":
-            ref_image, rotation = self.api.dumpRotateImage(self.ref.image, yaw)
-        else:
-            ref_image, rotation = self.ref.image, np.eye(2, 3, dtype=np.float32)
-        res = np.array([self.ref.res, self.ref.res], dtype=np.float32)
-        origin = np.zeros(2, dtype=np.float32)
-        self.trace['prepare_s']=time.perf_counter()-self.frame_start
-        with tempfile.TemporaryDirectory(prefix="nav-rgb-") as run, self.torch.inference_mode():
-            self.torch.cuda.synchronize();start=time.perf_counter()
-            _, rows, cols, _, ph, pw, scale, _ = self.api.retrieval_all_anyvisloc(
-                ref_image, image, data, res, origin, rotation, run, self.opt, self.settings, self.methods)
-            self.torch.cuda.synchronize()
-            self.trace['retrieval_s']=time.perf_counter()-start
-            xyz,counts=[],[]
-            seen_tiles=set()
-            for rank in range(min(len(rows),self.tuning['max_candidates'])):
-                tile=(rows[rank],cols[rank])
-                if tile in seen_tiles:continue
-                seen_tiles.add(tile)
-                if self.trace['candidates_attempted']>=self.tuning['initial_candidates']:self.trace['fallback_used']=True
-                self.last_geometry={};self.trace['candidates_attempted']+=1
-                start=time.perf_counter()
-                positions,n,_,_=self.api.Match2Pos_all_anyvisloc(
-                    self.opt,self.settings,image,scale,K,ref_image,self.ref.dsm-self.ref.z0,
-                    [rows[rank]],[cols[rank]],ph,pw,run,self.methods,rotation,res,origin,res,origin,
-                    dist=np.zeros(5),truePos=None)
-                self.torch.cuda.synchronize();self.trace['candidate_pipeline_s']+=time.perf_counter()-start
-                xyz.extend(positions);counts.extend(n)
-                point=positions[0] if positions else {}
-                xy=[point['X'],point['Y']] if point.get('X') is not None and point.get('Y') is not None else None
-                if self.candidate_finished(xy,n[0] if n else 0):break
-        candidates = [i for i, p in enumerate(xyz) if counts[i] >= self.tuning['min_result_inliers'] and
-                      all(p.get(k) is not None and np.isfinite(p[k]) for k in ("X", "Y", "Z"))]
-        if not candidates:
-            raise RuntimeError("AnyVisLoc: no valid PnP solution")
-        best = max(candidates, key=lambda i: counts[i])
-        if self.tuning['reject_weak_results'] and not good_enough(self.trace['candidates'],self.tuning):
-            raise RuntimeError('AnyVisLoc: geometry quality gate not met')
-        lon, lat, alt = self.ref.local_to_geographic(xyz[best])
-        self.last_fix = (lon, lat, counts[best])
-        return lon, lat, alt, self.confidence(counts[best])
 
 
 class SCCBackend(BaseBackend):

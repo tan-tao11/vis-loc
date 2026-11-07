@@ -32,3 +32,17 @@ class InfraredOnlyTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class SharedSoConfigTests(unittest.TestCase):
+    def test_vertical_and_slant_examples_share_one_build(self):
+        from tuning import read_config
+        import consistency, self_eval
+        from prior_tracker import PriorTracker
+        v = read_config(ROOT.parent/'naviParams.vertical.example.txt')['infrared']
+        s = read_config(ROOT.parent/'naviParams.slant.example.txt')['infrared']
+        self.assertTrue(v['camera']['nadir_reference_alignment']); self.assertFalse(v['camera'].get('oblique', False))
+        self.assertFalse(s['camera']['nadir_reference_alignment']); self.assertTrue(s['camera']['oblique'])
+        self.assertNotEqual(v['retrieval_head'], s['retrieval_head'])
+        for sec in (v, s):   # every section parses with this code
+            consistency.settings(sec['consistency']); self_eval.settings(sec['self_eval']); PriorTracker(sec['prior_tracking'])

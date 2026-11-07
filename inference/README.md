@@ -8,14 +8,14 @@
 
 ## 倾斜专用版本（2026-11-07，slant 分支）
 
-本源码用于**倾斜（DS/NS）专用 .so**；垂直数据使用另一个 .so。`infrared.camera.oblique: true` 时：
+垂直和倾斜共用本源码编译出的**同一个 .so**，靠配置文件区分；`infrared.camera.oblique: true` 时：
 
 1. `BaseBackend.prepare` 先在飞机先验处读 200 m 的 DSM 得到 AGL，再把搜索地图中心前移到光轴地面点（AGL/tan(俯角)），返回给 SCC 的先验仍是飞机位置；
 2. `SCCBackend.localize` 用 `single-so/python/oblique.py` 把查询图矫正成“一个块大小、航向朝上”的俯视图后再送检索（`utils.retrieval_all` 的 `query_prepared`）；
 3. `feature_extract` 用同一个可见区域 `tile_mask` 遮挡每个候选块；
 4. 块大小按短边 × `camera.query_crop_scale` 的中心区域估算。
 
-训练端 `training/scc_oblique.py` 与 `oblique.py` 逐字节相同。配置见 `naviParams.example.txt`，步骤见 [倾斜训练与部署指南](../training/docs/倾斜训练与部署指南.md)。另含 `prior_tracker` 的 `offset_model`（固定 / 缓慢变化的先验偏移）、失败时打印堆栈和 `[RETRIEVAL_TOP]` 日志。
+训练端 `training/scc_oblique.py` 与 `oblique.py` 逐字节相同。配置见 `naviParams.slant.example.txt`（倾斜）和 `naviParams.vertical.example.txt`（垂直），两者共用同一个 .so，步骤见 [倾斜训练与部署指南](../training/docs/倾斜训练与部署指南.md)。另含 `prior_tracker` 的 `offset_model`（固定 / 缓慢变化的先验偏移）、失败时打印堆栈和 `[RETRIEVAL_TOP]` 日志。
 
 ## 目录与入口
 
@@ -26,7 +26,7 @@
 | `single-so/python/backends.py` | 字段、K／AGL／姿态、参考旋转、中心日志、算法调用 |
 | `single-so/python/geodata.py`、`tuning.py` | GeoTIFF／TFW／PRJ、地图读取、调参及可选matching诊断 |
 | `projects/SCC-Loc/` | 红外共享DINOv2检索、MINIMA-RoMa及项目内源依赖 |
-| `naviParams.example.txt` | 去除机器私有路径的配置示例，不是比赛机实测配置 |
+| `naviParams.vertical.example.txt`、`naviParams.slant.example.txt` | 垂直 / 倾斜配置示例（同一个 .so，初始化时传入不同配置）；不是比赛机实测配置 |
 | `single-so/WEIGHTS.json` | 原部署权重的名称、大小和SHA256，不包含权重 |
 | `runtime-requirements.snapshot.txt` | 原ARM64运行时包元数据，不是Windows安装锁文件 |
 | `SOURCE_MANIFEST.json`、`tools/compare_cache.py` | 源码哈希、运行时映射、实际缓存只读比对 |
